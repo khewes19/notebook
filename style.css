@@ -34,7 +34,9 @@ letter-spacing:0;tab-size:4;
 #er .bad{text-decoration:underline wavy var(--warn);
 text-decoration-skip-ink:none;-webkit-text-decoration:underline wavy var(--warn)}
 #warn.hint{color:var(--kw)}
-#wrap,#ed,#hl,#er,#list{touch-action:pan-y}
+/* touch-action is set by * above, so the scrollers need it back on their
+   descendants too — a pan is refused if the element under the finger says no */
+#wrap,#ed,#hl,#er,#list,#list *,#gfx,#gfx *,#cell,#cell *{touch-action:pan-y}
 #pad,#pad button,#hd,#hd button{touch-action:none}
 #ed{background:transparent;color:transparent;caret-color:var(--kw);resize:none;overflow:auto;
 -webkit-text-fill-color:transparent}
