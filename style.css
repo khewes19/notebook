@@ -1,10 +1,12 @@
 :root{
 --bg:#faf9f5; --surf:#fff; --bd:#dedcd3; --key:#fff; --panel:#d1d4db; --ksh:rgba(0,0,0,.30); --fg:#2c2c2a; --mut:#888780;
 --kw:#7F77DD; --str:#639922; --num:#1D9E75; --com:#B4B2A9; --fn:#378ADD; --warn:#A32D2D;
+--slf:#B5527D; --con:#C2571E; --bi:#0E8FA8; --dec:#B87309; --op:#6B7A8F;
 }
 @media (prefers-color-scheme:dark){
 :root{--bg:#1a1a18; --surf:#232320; --bd:#3a3a36; --key:#4d4d48; --panel:#131312; --ksh:rgba(0,0,0,.55); --fg:#eeece5; --mut:#a3a29b;
---kw:#AFA9EC; --str:#97C459; --num:#5DCAA5; --com:#888780; --fn:#85B7EB; --warn:#F09595;}
+--kw:#AFA9EC; --str:#97C459; --num:#5DCAA5; --com:#888780; --fn:#85B7EB; --warn:#F09595;
+--slf:#E8A0C0; --con:#F0A97C; --bi:#6FC7DC; --dec:#E3A857; --op:#9DAAB8;}
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;touch-action:none;
 -webkit-text-size-adjust:100%;text-size-adjust:100%}
@@ -43,6 +45,10 @@ text-decoration-skip-ink:none;-webkit-text-decoration:underline wavy var(--warn)
 #ed::selection{background:rgba(127,119,221,.35);-webkit-text-fill-color:transparent}
 .kw{color:var(--kw)} .str{color:var(--str)} .num{color:var(--num)}
 .com{color:var(--com);font-style:italic} .fn{color:var(--fn)}
+/* monospace bold keeps the same advance width, so #hl stays aligned with #ed */
+.dfn{color:var(--fn);font-weight:600} .slf{color:var(--slf)} .con{color:var(--con)}
+.bi{color:var(--bi)} .dec{color:var(--dec)} .op{color:var(--op)}
+.b0{color:var(--kw)} .b1{color:var(--dec)} .b2{color:var(--bi)}
 #pad{flex:0 0 auto;margin:0 -6px -6px;
 display:flex;flex-direction:column;gap:11px;
 background:var(--panel);padding:9px 4px calc(9px + env(safe-area-inset-bottom));

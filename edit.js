@@ -16,12 +16,46 @@ var shift=false, page=0;
 // point it at your own proxy (tailscale / worker) once the key lives there.
 var API='https://api.anthropic.com';
 
-var KW='def|class|return|yield|if|elif|else|for|while|break|continue|pass|'
+var KW='return|yield|if|elif|else|for|while|break|continue|pass|'
      +'import|from|as|with|try|except|finally|raise|lambda|and|or|not|in|is|'
-     +'None|True|False|self|assert|global|nonlocal|del|async|await';
-var RE=new RegExp('(#[^\\n]*)'
- +'|("""[\\s\\S]*?"""|\'\'\'[\\s\\S]*?\'\'\'|"(?:[^"\\\\\\n]|\\\\.)*"|\'(?:[^\'\\\\\\n]|\\\\.)*\')'
- +'|\\b('+KW+')\\b|\\b(\\d+\\.?\\d*(?:[eE][-+]?\\d+)?)\\b|([A-Za-z_]\\w*)(?=\\s*\\()','g');
+     +'assert|global|nonlocal|del|async|await';
+var BI='abs|all|any|bool|bytes|callable|chr|dict|dir|divmod|enumerate|filter|'
+     +'float|format|frozenset|getattr|hasattr|hash|hex|id|input|int|isinstance|'
+     +'issubclass|iter|len|list|map|max|min|next|object|open|ord|pow|print|'
+     +'range|repr|reversed|round|set|setattr|sorted|str|sum|super|tuple|type|'
+     +'vars|zip';
+var STR='"""[\\s\\S]*?"""|\'\'\'[\\s\\S]*?\'\'\''
+      +'|"(?:[^"\\\\\\n]|\\\\.)*"|\'(?:[^\'\\\\\\n]|\\\\.)*\'';
+// Order is the whole design here. Strings and comments come first so nothing
+// inside them is tokenised; the two-part def/class match has to beat the bare
+// keyword alternative; self and the constants have to beat it too.
+// The subject string has already been through esc(), so < > & arrive as
+// entities — the operator branch matches those forms and never a bare &,
+// which would otherwise chop an entity in half.
+var RE=new RegExp(
+   '(#[^\\n]*)'                                     // 1  comment
+ +'|([rbfuRBFU]{0,2}(?:'+STR+'))'                   // 2  string
+ +'|(@[A-Za-z_][\\w.]*)'                            // 3  decorator
+ +'|\\b(def|class)(\\s+)([A-Za-z_]\\w*)'            // 4,5,6  declaration
+ +'|\\b(self|cls)\\b'                               // 7  receiver
+ +'|\\b(None|True|False)\\b'                        // 8  constant
+ +'|\\b('+KW+')\\b'                                 // 9  keyword
+ +'|\\b('+BI+')\\b'                                 // 10 builtin
+ +'|\\b(\\d+\\.?\\d*(?:[eE][-+]?\\d+)?)\\b'         // 11 number
+ +'|([A-Za-z_]\\w*)(?=\\s*\\()'                     // 12 call
+ +'|([\\[\\](){}])'                                 // 13 bracket
+ +'|(-&gt;|&lt;=|&gt;=|==|!=|&lt;|&gt;|&amp;|\\*\\*|//|\\+|-|\\*|/|%|=|\\||\\^|~)'
+ ,'g');                                             // 14 operator
+
+function sp(c,t){return '<span class="'+c+'">'+t+'</span>';}
+// three colours cycling by nesting depth. the whole reason this editor exists
+// is that you cannot see where a bracket went missing on a phone; matching
+// pairs sharing a colour is the cheapest fix for that.
+var bdepth=0;
+function brk(ch){
+  var d=(ch==='('||ch==='['||ch==='{')?bdepth++:(bdepth=Math.max(0,bdepth-1));
+  return sp('b'+(d%3),ch);
+}
 
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 var er=document.getElementById('er');
@@ -85,13 +119,22 @@ function paint(){
   praf=requestAnimationFrame(function(){praf=null;paintNow();});
 }
 function paintNow(){
-  hl.innerHTML=esc(ed.value).replace(RE,function(m,c,s,k,n,f){
-    if(c)return '<span class="com">'+c+'</span>';
-    if(s)return '<span class="str">'+s+'</span>';
-    if(k)return '<span class="kw">'+k+'</span>';
-    if(n)return '<span class="num">'+n+'</span>';
-    if(f)return '<span class="fn">'+f+'</span>';
-    return m;})+'\n\n';
+  bdepth=0;
+  hl.innerHTML=esc(ed.value).replace(RE,
+    function(m,com,str,dec,dk,dgap,dnm,slf,con,kw,bi,num,fn,br,op){
+      if(com)return sp('com',com);
+      if(str)return sp('str',str);
+      if(dec)return sp('dec',dec);
+      if(dnm)return sp('kw',dk)+dgap+sp('dfn',dnm);
+      if(slf)return sp('slf',slf);
+      if(con)return sp('con',con);
+      if(kw)return sp('kw',kw);
+      if(bi)return sp('bi',bi);
+      if(num)return sp('num',num);
+      if(fn)return sp('fn',fn);
+      if(br)return brk(br);
+      if(op)return sp('op',op);
+      return m;})+'\n\n';
   hl.scrollTop=ed.scrollTop;
   var ls=ed.value.split('\n'),mx=0;
   for(var i=0;i<ls.length;i++)if(ls[i].length>mx)mx=ls[i].length;
