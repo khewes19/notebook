@@ -9,6 +9,55 @@ var OPEN={'(':1,'[':1,'{':1}, CLOSE={')':'(',']':'[','}':'{'};
 var COMPOUND=/^(\s*)(def|class|if|elif|else|for|while|with|try|except|finally)\b/;
 var RESERVED=/^(True|False|None|and|or|not|in|is|if|elif|else|def|class|return|import|from|pass|break|continue|lambda|yield|while|for|with|try|except|finally|global|nonlocal|del|assert|raise|as|async|await)$/;
 
+// characters that are never python outside a string or a comment. most of
+// these arrive on a phone by paste or autocorrect and are invisible on screen
+// — a curly quote and a straight one are one pixel apart at this size — which
+// is exactly why they earn a squiggle.
+// written as escapes on purpose: a literal U+00A0 in a character class is
+// invisible in every editor, including this one.
+var STRAY=/[$?`\u00a0\u2018\u2019\u201c\u201d\u2013\u2014\u00d7\u2212]/g;
+var STRAYMSG={
+  '$':'"$" is not python',
+  '?':'"?" is not python',
+  '`':'backticks are not python',
+  '\u00a0':'non-breaking space, not a space',
+  '\u2018':'curly quote - python needs \'',
+  '\u2019':'curly quote - python needs \'',
+  '\u201c':'curly quote - python needs "',
+  '\u201d':'curly quote - python needs "',
+  '\u2013':'en dash, not a minus',
+  '\u2014':'em dash, not a minus',
+  '\u00d7':'\u00d7 is not *',
+  '\u2212':'minus sign, not a hyphen'
+};
+
+// which keyword a block-continuation clause is allowed to follow at its own
+// indent. anything else is dangling and cannot be anything but an error.
+var FOLLOWS={
+  elif:{'if':1,elif:1},
+  'else':{'if':1,elif:1,'for':1,'while':1,'try':1,'except':1},
+  'except':{'try':1,'except':1},
+  'finally':{'try':1,'except':1,'else':1}
+};
+
+// the '(' opening a trailing call in an assignment target, or -1 if the
+// parenthesis is grouping rather than calling — '(a, b) = 1, 2' is legal.
+function callOpen(lhs){
+  if(!/\)$/.test(lhs))return -1;
+  var d=0;
+  for(var j=lhs.length-1;j>=0;j--){
+    var ch=lhs.charAt(j);
+    if(ch===')')d++;
+    else if(ch==='('){
+      if(--d)continue;
+      var k=j-1;
+      while(k>=0&&lhs.charAt(k)===' ')k--;
+      return (k>=0&&/[\w\]]/.test(lhs.charAt(k)))?j:-1;
+    }
+  }
+  return -1;
+}
+
 // two stripped copies of a line, both original length so columns stay true:
 //   flat — strings and comments blanked, brackets and contents kept
 //   mask — flat, plus everything nested inside brackets blanked
@@ -86,6 +135,7 @@ function lintPy(src){
   var continues=false;   // previous statement ended in '\'
   var started=false;
   var stmtCompound=false;
+  var lastAt={};         // indent column -> keyword the last statement there began with
 
   for(var i=0;i<lines.length;i++){
     st.line=i;
@@ -100,6 +150,15 @@ function lintPy(src){
         msg:'unterminated string'});
       st.q=null;
     }
+
+    // before the blank-line skip below: a line holding nothing but a
+    // non-breaking space looks blank and is still a syntax error. r.flat is
+    // used untrimmed here because \s strips   along with real spaces.
+    STRAY.lastIndex=0;
+    var sm;
+    while((sm=STRAY.exec(r.flat))!==null)
+      st.errs.push({line:i,col:sm.index,len:1,
+        msg:STRAYMSG[sm[0]]||'not valid python'});
 
     // blank or comment-only, and not part of a multi-line statement
     if(!code.trim()&&!nestedAtStart)continue;
@@ -129,6 +188,20 @@ function lintPy(src){
         }
         if(started&&ind.indexOf('\t')<0&&col0%4!==0)
           st.errs.push({line:i,col:0,len:col0,msg:'indent is not a multiple of 4'});
+
+        // an elif/else/except/finally has to answer something at its own
+        // indent. guarded by !continues because 'x = 1 if y \' then 'else 2'
+        // puts a perfectly legal else at the start of a line.
+        var bk=code.match(/^(\s*)([A-Za-z_]\w*)/);
+        var kwHere=bk?bk[2]:'';
+        var ok=FOLLOWS[kwHere];
+        if(ok&&!ok[lastAt[col0]])
+          st.errs.push({line:i,col:bk[1].length,len:kwHere.length,
+            msg:'"'+kwHere+'" with no '
+              +((kwHere==='except'||kwHere==='finally')?'"try"':'"if"')
+              +' at this indent'});
+        for(var kc in lastAt)if(lastAt.hasOwnProperty(kc)&&+kc>col0)delete lastAt[kc];
+        lastAt[col0]=kwHere;
       }
       started=true;
       stmtCompound=COMPOUND.test(code);
@@ -156,6 +229,22 @@ function lintPy(src){
         else if(/^\d/.test(a[2]))
           st.errs.push({line:i,col:a[1].length,len:a[2].length,
             msg:'cannot assign to a number'});
+      }
+
+      // mask blanks brackets and everything in them, so a bare '=' found in
+      // it is the statement's assignment operator and never one inside a call.
+      // whatever sits to its left in flat is the target: 'f(x) = 1' is an
+      // error, while 'f(x)[0] = 1' and '(a, b) = 1, 2' are both fine.
+      if(!continues){
+        var eq0=findBareEq(code,0);
+        if(eq0>0){
+          var lhs=flat.slice(0,eq0).replace(/\s+$/,'');
+          if(callOpen(lhs)>=0){
+            var lead=lhs.length-lhs.replace(/^\s+/,'').length;
+            st.errs.push({line:i,col:lead,len:Math.max(1,lhs.length-lead),
+              msg:'cannot assign to a function call'});
+          }
+        }
       }
 
       // the string is blanked in flat, so this rule reads the raw line.
