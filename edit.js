@@ -32,18 +32,31 @@ function redline(ls){
   if(typeof lintPy!=='function')return;
   ERRS=lintPy(ed.value);
   var bad={};
-  ERRS.forEach(function(e){bad[e.line]=e.msg;});
+  ERRS.forEach(function(e){(bad[e.line]=bad[e.line]||[]).push(e);});
   if(er){
     er.innerHTML=ls.map(function(l,i){
-      var t=esc(l)||' ';
-      return bad.hasOwnProperty(i)?'<span class="bad">'+t+'</span>':t;
+      var marks=bad[i];
+      if(!marks)return esc(l);
+      // walk the line, wrapping only the marked spans. errors arrive sorted
+      // and non-overlapping, so a single left-to-right pass is enough.
+      var html='',pos=0;
+      for(var k=0;k<marks.length;k++){
+        var a=Math.min(marks[k].col,l.length);
+        var b=Math.min(a+marks[k].len,l.length);
+        if(a<pos)continue;
+        html+=esc(l.slice(pos,a));
+        html+='<span class="bad">'+(esc(l.slice(a,b))||' ')+'</span>';
+        pos=b;
+      }
+      html+=esc(l.slice(pos));
+      return html;
     }).join('\n')+'\n\n';
     er.scrollTop=ed.scrollTop;
   }
   if(!warn)return;
   if(ERRS.length){
     warn.className='';
-    warn.textContent='⚠ line '+(ERRS[0].line+1)+' — '+ERRS[0].msg
+    warn.textContent='⚠ '+(ERRS[0].line+1)+':'+(ERRS[0].col+1)+' — '+ERRS[0].msg
       +(ERRS.length>1?'  (+'+(ERRS.length-1)+')':'');
   }else{
     var ov=0;
@@ -55,8 +68,9 @@ function redline(ls){
 // tap the warn bar to jump to the first error
 if(warn)warn.addEventListener('click',function(){
   if(!ERRS.length)return;
-  var p=ed.value.split('\n').slice(0,ERRS[0].line).join('\n').length;
-  ed.selectionStart=ed.selectionEnd=ERRS[0].line?p+1:0;
+  var head=ed.value.split('\n').slice(0,ERRS[0].line).join('\n').length;
+  var p=(ERRS[0].line?head+1:0)+ERRS[0].col;
+  ed.selectionStart=ed.selectionEnd=Math.min(p,ed.value.length);
   ed.focus();
 });
 function paint(){
@@ -132,15 +146,24 @@ function fill(host,chars){
   });
 }
 
-var CODE=[['⇥',function(){ins('    ');}],['⇤',dedent],[':',function(){ins(':');}],
+// two rows of nine. one row of seventeen scrolled, which meant the last
+// eight keys — '#' included — were never on screen.
+var CODE1=[['⇥',function(){ins('    ');}],['⇤',dedent],[':',function(){ins(':');}],
 ['(',function(){ins('()',1);}],[')',function(){ins(')');}],
 ['[',function(){ins('[]',1);}],[']',function(){ins(']');}],
-['"',function(){ins('""',1);}],['_',function(){ins('_');}],
-['=',function(){ins(' = ');}],['.',function(){ins('.');}],
-[',',function(){ins(', ');}],['self',function(){ins('self');}],
-['def',function(){ins('def ');}],['<',function(){ins(' < ');}],
-['>',function(){ins(' > ');}],['#',function(){ins('# ');}]];
-CODE.forEach(function(k){mk(document.getElementById('code'),k[0],k[1]);});
+['"',function(){ins('""',1);}],["'",function(){ins("''",1);}]];
+var CODE2=[['_',function(){ins('_');}],['=',function(){ins(' = ');}],
+['.',function(){ins('.');}],[',',function(){ins(', ');}],
+['<',function(){ins(' < ');}],['>',function(){ins(' > ');}],
+['#',function(){ins('# ');}],['self',function(){ins('self');}],
+['def',function(){ins('def ');}]];
+function fillCode(host,keys){
+  keys.forEach(function(k){
+    mk(host,k[0],k[1],k[0].length>1?'word':'');
+  });
+}
+fillCode(document.getElementById('code'),CODE1);
+fillCode(document.getElementById('code2'),CODE2);
 
 var r1=document.getElementById('r1'),r2=document.getElementById('r2'),
     r3=document.getElementById('r3'),r4=document.getElementById('r4');
