@@ -16,9 +16,7 @@ which the cell does not have yet.
 
 ## haptics
 
-The pad calls `navigator.vibrate(3)` on every key. iOS Safari does not
-implement it, so the tick this keyboard was designed around has never fired on
-an iPhone. There is a known workaround — a hidden `<input type="checkbox"
-switch>` toggled per press triggers the system haptic on iOS 17.4+ — but it is
-a hack riding on a control's side effect, and it should be tried deliberately
-rather than slipped in.
+Solved by handing the keyboard back to iOS: the system keyboard brings its own
+feedback, and navigator.vibrate - which iOS Safari does not implement, so the
+tick this pad was designed around never once fired on an iPhone - stopped
+mattering. It is only worth reopening if SYSKB ever goes back to false.
