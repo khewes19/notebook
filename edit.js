@@ -157,6 +157,7 @@ function showErrs(ls){
       return html;
     }).join('\n')+'\n\n';
     er.scrollTop=ed.scrollTop;
+    er.style.visibility='';
     erShown=ERRS.length>0;
   }
   if(!warn)return;
@@ -227,9 +228,10 @@ function paintNow(){
   for(var i=0;i<ls.length;i++)if(ls[i].length>mx)mx=ls[i].length;
   ct.textContent=ls.length+' ln · max '+mx
     +(slowMs>8?' · '+Math.round(slowMs)+'ms':'');
-  // the old squiggles describe text that has since moved; drop them rather
-  // than leave them underlining the wrong characters until the next lint
-  if(erShown&&er){er.innerHTML='';erShown=false;}
+  // the old squiggles describe text that has since moved, so they go away —
+  // but hide the layer rather than clearing it. innerHTML='' tears down a
+  // whole document's worth of nodes, and the next lint rebuilds it anyway.
+  if(erShown&&er){er.style.visibility='hidden';erShown=false;}
   lintPending=true;
   try{clearTimeout(lintT);}catch(e){}
   lintT=setTimeout(function(){redline(ed.value.split('\n'));},220);
@@ -244,11 +246,14 @@ function paintNow(){
 }
 var T=null;
 function tgt(){return T||ed;}
+// focus() on an element that already has it is not free on iOS — it can still
+// go through scroll-into-view. Every key press was calling it.
+function refocus(x){if(document.activeElement!==x)x.focus();}
 function ins(t,back){
   var x=tgt(),s=x.selectionStart,e=x.selectionEnd,v=x.value;
   x.value=v.slice(0,s)+t+v.slice(e);
   x.selectionStart=x.selectionEnd=s+t.length-(back||0);
-  x.focus(); if(x===ed)paint();
+  refocus(x); if(x===ed)paint();
 }
 function dedent(){
   var v=ed.value,s=ed.selectionStart,ls=v.lastIndexOf('\n',s-1)+1,
@@ -256,19 +261,19 @@ function dedent(){
   if(!m)return;
   ed.value=v.slice(0,ls)+v.slice(ls+m[0].length);
   ed.selectionStart=ed.selectionEnd=Math.max(ls,s-m[0].length);
-  ed.focus(); paint();
+  refocus(ed); paint();
 }
 function back(){
   var x=tgt(),s=x.selectionStart,e=x.selectionEnd,v=x.value;
   var ed=x;
   if(s!==e){ed.value=v.slice(0,s)+v.slice(e);
-    ed.selectionStart=ed.selectionEnd=s; ed.focus(); paint(); return;}
+    ed.selectionStart=ed.selectionEnd=s; refocus(ed); paint(); return;}
   if(s===0)return;
   var ls=v.lastIndexOf('\n',s-1)+1, pre=v.slice(ls,s), n=1;
   if(pre.length&&pre.length%4===0&&/^ +$/.test(pre))n=4;
   ed.value=v.slice(0,s-n)+v.slice(s);
   ed.selectionStart=ed.selectionEnd=s-n;
-  ed.focus(); paint();
+  refocus(ed); paint();
 }
 function enter(){
   var x=tgt(),v=x.value,s=x.selectionStart,ls=v.lastIndexOf('\n',s-1)+1,
