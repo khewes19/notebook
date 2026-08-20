@@ -200,7 +200,16 @@ function paint(){
   if(praf!==null)return;         // one repaint per frame, not one per key
   praf=requestAnimationFrame(function(){praf=null;paintNow();});
 }
+// Worst recent repaint, in ms, decayed so a one-off spike fades instead of
+// sticking. Shown in the counter only when it is bad enough to feel, so that
+// "typing is laggy" can be answered with a number instead of a theory — and if
+// this stays small while typing still drags, the cost is not in here.
+var slowMs=0;
+var now=(window.performance&&performance.now)
+  ? function(){return performance.now();} : function(){return 0;};
+
 function paintNow(){
+  var t0=now();
   bdepth=0; pendDfn=false;
   hl.innerHTML=esc(ed.value).replace(RE,
     function(m,com,str,dec,num,wd,br,op,at,whole){
@@ -216,7 +225,8 @@ function paintNow(){
   hl.scrollTop=ed.scrollTop;
   var ls=ed.value.split('\n'),mx=0;
   for(var i=0;i<ls.length;i++)if(ls[i].length>mx)mx=ls[i].length;
-  ct.textContent=ls.length+' ln · max '+mx;
+  ct.textContent=ls.length+' ln · max '+mx
+    +(slowMs>8?' · '+Math.round(slowMs)+'ms':'');
   // the old squiggles describe text that has since moved; drop them rather
   // than leave them underlining the wrong characters until the next lint
   if(erShown&&er){er.innerHTML='';erShown=false;}
@@ -230,6 +240,7 @@ function paintNow(){
     try{queue();}catch(e){}
   }
   lastVal=ed.value;
+  if(t0)slowMs=Math.max(now()-t0,slowMs*0.85);
 }
 var T=null;
 function tgt(){return T||ed;}

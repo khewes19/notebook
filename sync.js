@@ -11,6 +11,9 @@ var GSHA={};    // path -> blob sha of the version we last saw on the remote
 var GBASE={};   // path -> hash of the content we last saw on the remote
 var GDIRTY=false;
 var gtimer=null, gbusy=false, gstat='off', gerr='';
+// A rejected token will be rejected again. Stop pushing until it changes,
+// rather than waking the radio every few seconds to be told no.
+var GHALT=false;
 
 // FNV-1a. Only ever compared against itself, so any cheap hash will do — the
 // point is to spot a changed file without keeping a second copy of every file
@@ -98,6 +101,7 @@ function ghApi(path,opts){
         if(!r.ok){
           var e=new Error((j&&j.message)||('github '+r.status));
           e.status=r.status;
+          if(r.status===401)GHALT=true;   // no point asking again
           throw e;
         }
         return j;
@@ -238,7 +242,7 @@ function ghPush(){
 // store.js calls this after each debounced local save. Push on a longer fuse
 // than the 700 ms local write, so a burst of typing is one commit, not thirty.
 function ghQueue(){
-  if(!ghOn())return;
+  if(!ghOn()||GHALT)return;
   GDIRTY=true;
   try{clearTimeout(gtimer);}catch(e){}
   gtimer=setTimeout(function(){ghPush();},4000);
@@ -295,6 +299,30 @@ function ghPanel(host,redraw){
   var ft=field('fine-grained token · contents read and write',GH.token,
                'github_pat_…',true);
 
+  // A hidden field you cannot check is no good when the token is ninety
+  // characters of noise and the failure is a flat "bad credentials". The
+  // counter updates as you type, so a short paste is obvious before you save.
+  var tinfo=document.createElement('div');
+  tinfo.className='note';
+  var tcount=function(){
+    var v=ft.value.trim();
+    tinfo.textContent=v
+      ? v.length+' characters'+(v.length>=60?'':' — that is too short')
+      : 'paste it; it is not typeable';
+  };
+  ft.addEventListener('input',tcount);
+  tcount();
+  var eye=document.createElement('span');
+  eye.className='pen';
+  eye.textContent='show';
+  eye.addEventListener('click',function(){
+    var hid=ft.type==='password';
+    ft.type=hid?'text':'password';
+    eye.textContent=hid?'hide':'show';
+  });
+  tinfo.appendChild(eye);
+  form.appendChild(tinfo);
+
   var caution=document.createElement('div');
   caution.className='note';
   caution.textContent='the token is kept in this phone’s localStorage. scope it '
@@ -316,6 +344,7 @@ function ghPanel(host,redraw){
     GH.owner=fo.value.trim(); GH.repo=fr.value.trim();
     GH.branch=fb.value.trim()||'main'; GH.token=ft.value.trim();
     GSHA={}; GBASE={}; GDIRTY=true;   // a different repo shares no history
+    GHALT=false;                      // a new token deserves a fresh try
     ghCfgSave();
     if(!ghOn()){ghStat('off');redraw();return;}
 
@@ -383,7 +412,8 @@ function ghPanel(host,redraw){
     ghCfgSave(); ghStat('off'); redraw();
   });
 
-  var open=!ghOn();
+  // an error with the form shut leaves nowhere to fix it
+  var open=!ghOn()||gstat==='err';
   form.style.display=open?'block':'none';
   t.addEventListener('click',function(){
     open=!open;
