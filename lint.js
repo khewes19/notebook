@@ -58,6 +58,16 @@ function callOpen(lhs){
   return -1;
 }
 
+// blank the r/b/f/u letters in front of a string literal, so the f of an
+// f-string is not left behind looking like a bare name. only a prefix if what
+// sits before it is not itself part of an identifier — "if'a'" is not one.
+function eatPrefix(L,flat,mask,j){
+  var k=j-1,n=0;
+  while(k>=0&&n<2&&/[rbfuRBFU]/.test(L.charAt(k))){k--;n++;}
+  if(!n||(k>=0&&/\w/.test(L.charAt(k))))return;
+  for(var q=k+1;q<j;q++){flat[q]=' ';mask[q]=' ';}
+}
+
 // two stripped copies of a line, both original length so columns stay true:
 //   flat — strings and comments blanked, brackets and contents kept
 //   mask — flat, plus everything nested inside brackets blanked
@@ -79,9 +89,13 @@ function scanLine(L,st){
     if(c==='#'){ while(j<L.length){flat[j]=mask[j]=' ';j++;} break; }
     if(three==='"""'||three==="'''"){
       st.tri=three; st.triLine=st.line; st.triCol=j;
+      eatPrefix(L,flat,mask,j);
       flat[j]=flat[j+1]=flat[j+2]=' '; mask[j]=mask[j+1]=mask[j+2]=' '; j+=2; continue;
     }
-    if(c==='"'||c==="'"){ st.q=c; st.qcol=j; flat[j]=mask[j]=' '; continue; }
+    if(c==='"'||c==="'"){
+      st.q=c; st.qcol=j; eatPrefix(L,flat,mask,j);
+      flat[j]=mask[j]=' '; continue;
+    }
     if(OPEN[c]){
       flat[j]=c; mask[j]=' ';
       st.stack.push({ch:c,line:st.line,col:j}); continue;
@@ -114,6 +128,151 @@ function findBareEq(s,from){
   return -1;
 }
 
+// ---- names -----------------------------------------------------------------
+// A name that is bound nowhere in any open file cannot resolve at runtime, and
+// that is the only claim this rule makes. It deliberately ignores scope: a
+// function may reference a global defined further down the file, a name bound
+// in one branch is visible in another, and a helper may live in a sibling file.
+// So bindings are over-collected on purpose — every miss here would surface as
+// a false squiggle, while an over-collected name only costs a missed report.
+
+var PYKW={};
+('False None True and as assert async await break class continue def del elif '
++'else except finally for from global if import in is lambda nonlocal not or '
++'pass raise return try while with yield match case')
+  .split(' ').forEach(function(k){PYKW[k]=1;});
+
+var BUILTIN={};
+('abs aiter anext all any ascii bin bool breakpoint bytearray bytes callable '
++'chr classmethod compile complex delattr dict dir divmod enumerate eval exec '
++'filter float format frozenset getattr globals hasattr hash help hex id input '
++'int isinstance issubclass iter len list locals map max memoryview min next '
++'object oct open ord pow print property range repr reversed round set setattr '
++'slice sorted staticmethod str sum super tuple type vars zip '
++'ArithmeticError AssertionError AttributeError BaseException BaseExceptionGroup '
++'BlockingIOError BrokenPipeError BufferError BytesWarning ChildProcessError '
++'ConnectionAbortedError ConnectionError ConnectionRefusedError '
++'ConnectionResetError DeprecationWarning EOFError EncodingWarning '
++'EnvironmentError Exception ExceptionGroup FileExistsError FileNotFoundError '
++'FloatingPointError FutureWarning GeneratorExit IOError ImportError '
++'ImportWarning IndentationError IndexError InterruptedError IsADirectoryError '
++'KeyError KeyboardInterrupt LookupError MemoryError ModuleNotFoundError '
++'NameError NotADirectoryError NotImplemented NotImplementedError OSError '
++'OverflowError PendingDeprecationWarning PermissionError ProcessLookupError '
++'RecursionError ReferenceError ResourceWarning RuntimeError RuntimeWarning '
++'StopAsyncIteration StopIteration SyntaxError SyntaxWarning SystemError '
++'SystemExit TabError TimeoutError TypeError UnboundLocalError '
++'UnicodeDecodeError UnicodeEncodeError UnicodeError UnicodeTranslateError '
++'UnicodeWarning UserWarning ValueError Warning ZeroDivisionError '
++'Ellipsis NotImplemented __import__ '
+// self and cls are never worth flagging, and zooming into a method replaces
+// the buffer with its body, so the def line that binds them is not even there.
++'self cls').split(/\s+/).forEach(function(k){if(k)BUILTIN[k]=1;});
+
+function bindIdents(s,into){
+  var re=/[A-Za-z_]\w*/g,m;
+  while((m=re.exec(s))!==null){
+    // skip an attribute, and the "e5" the identifier pattern finds inside 1e5
+    if(m.index>0&&/[\w.]/.test(s.charAt(m.index-1)))continue;
+    if(PYKW[m[0]])continue;
+    into[m[0]]=1;
+  }
+}
+
+// the text between an opening bracket at `from` and its matching close
+function spanTo(s,from){
+  var d=0;
+  for(var j=from;j<s.length;j++){
+    var c=s.charAt(j);
+    if(c==='('||c==='['||c==='{')d++;
+    else if(c===')'||c===']'||c==='}'){if(!--d)return s.slice(from+1,j);}
+  }
+  return s.slice(from+1);
+}
+
+// every name this source binds, by any means, anywhere. sets into['*'] if the
+// file has a star import, after which nothing can be called undefined.
+function collectBindings(src,into){
+  var st={q:null,qcol:0,tri:null,triLine:0,triCol:0,stack:[],errs:[],line:0};
+  var lines=src.split('\n'),flats=[],masks=[],depth=[],i,m;
+  for(i=0;i<lines.length;i++){
+    st.line=i;
+    var r=scanLine(lines[i],st);
+    flats.push(r.flat); masks.push(r.mask); depth.push(st.stack.length);
+  }
+
+  // import statements bind generously: every identifier in the statement,
+  // continuation lines included. binding a module path costs nothing.
+  var importing=false;
+  for(i=0;i<flats.length;i++){
+    if(!importing&&/^[ \t]*(from|import)\b/.test(flats[i]))importing=true;
+    if(!importing)continue;
+    if(/(^|[\s,(])\*/.test(flats[i]))into['*']=1;
+    bindIdents(flats[i],into);
+    if(!depth[i]&&!/\\[ \t]*$/.test(flats[i]))importing=false;
+  }
+
+  var S=flats.join('\n');
+
+  // def NAME(params) and class NAME(bases) — the whole parameter list is bound,
+  // defaults and annotations included, which over-collects and is fine.
+  var dre=/\b(def|class)\s+([A-Za-z_]\w*)/g;
+  while((m=dre.exec(S))!==null){
+    into[m[2]]=1;
+    var open=S.indexOf('(',m.index+m[0].length);
+    if(open>=0&&!/[^ \t]/.test(S.slice(m.index+m[0].length,open)))
+      bindIdents(spanTo(S,open),into);
+  }
+
+  // lambda params, up to the colon that ends them
+  var lre=/\blambda\b/g;
+  while((m=lre.exec(S))!==null){
+    var col=S.indexOf(':',m.index);
+    if(col>m.index)bindIdents(S.slice(m.index+6,col),into);
+  }
+
+  // for TARGET in ... — statement or comprehension, both look the same here
+  var fre=/\bfor\b([\s\S]*?)\bin\b/g;
+  while((m=fre.exec(S))!==null)bindIdents(m[1],into);
+
+  // with ... as X, except E as X, import y as X
+  var are=/\bas\s+([A-Za-z_]\w*)/g;
+  while((m=are.exec(S))!==null)into[m[1]]=1;
+
+  // global / nonlocal declare names outright
+  var gre=/^[ \t]*(?:global|nonlocal)\b([^\n]*)/gm;
+  while((m=gre.exec(S))!==null)bindIdents(m[1],into);
+
+  // walrus, and a bare annotation like "count: int" with no value
+  var wre=/([A-Za-z_]\w*)\s*:=/g;
+  while((m=wre.exec(S))!==null)into[m[1]]=1;
+  var nre=/^[ \t]*([A-Za-z_]\w*)\s*:[ \t]*[^=\n][^\n]*$/gm;
+  while((m=nre.exec(S))!==null)if(!PYKW[m[1]])into[m[1]]=1;
+
+  // assignment targets. the mask copy has bracket contents blanked, so an '='
+  // found there is the statement's own operator and never a keyword argument;
+  // the text left of it is read back out of flat, where the names survive.
+  for(i=0;i<masks.length;i++){
+    var eq=-1,at=0;
+    for(;;){
+      var nx=findBareEq(masks[i],at);
+      if(nx<0)break;
+      eq=nx; at=nx+1;
+    }
+    if(eq>0)bindIdents(flats[i].slice(0,eq),into);
+  }
+}
+
+// is this identifier a keyword argument rather than a use of a variable?
+function isKwarg(s,at,end){
+  var b=at-1;
+  while(b>=0&&s.charAt(b)===' ')b--;
+  if(b<0||'(,'.indexOf(s.charAt(b))<0)return false;
+  var a=end;
+  while(a<s.length&&s.charAt(a)===' ')a++;
+  return s.charAt(a)==='='&&s.charAt(a+1)!=='=';
+}
+
 function tidy(errs){
   errs.sort(function(a,b){return a.line-b.line||a.col-b.col;});
   var out=[],last={};
@@ -127,7 +286,10 @@ function tidy(errs){
   return out;
 }
 
-function lintPy(src){
+// known: names bound in the other open files, so a helper defined in a sibling
+// file is not reported as missing. Optional — without it the check just sees
+// one file.
+function lintPy(src,known){
   var lines=src.split('\n');
   var st={q:null,qcol:0,tri:null,triLine:0,triCol:0,stack:[],errs:[],line:0};
   var levels=[0];        // open indent columns, the way CPython tracks them
@@ -136,6 +298,14 @@ function lintPy(src){
   var started=false;
   var stmtCompound=false;
   var lastAt={};         // indent column -> keyword the last statement there began with
+
+  var bound={},kn;
+  if(known)for(kn in known)if(known.hasOwnProperty(kn))bound[kn]=1;
+  collectBindings(src,bound);
+  // after "from x import *" any name at all might exist, so the whole check
+  // has to stand down rather than guess.
+  var checkNames=!bound['*'];
+  var importing=false;
 
   for(var i=0;i<lines.length;i++){
     st.line=i;
@@ -159,6 +329,24 @@ function lintPy(src){
     while((sm=STRAY.exec(r.flat))!==null)
       st.errs.push({line:i,col:sm.index,len:1,
         msg:STRAYMSG[sm[0]]||'not valid python'});
+
+    // a name bound in no open file cannot resolve. import statements are
+    // skipped whole — the names in them are module paths, not uses.
+    if(!importing&&/^[ \t]*(from|import)\b/.test(flat))importing=true;
+    if(checkNames&&!importing){
+      var ure=/[A-Za-z_]\w*/g,um;
+      while((um=ure.exec(r.flat))!==null){
+        var nm=um[0],at=um.index;
+        // an attribute is not a name, and 1e5 is not a use of "e5"
+        if(at>0&&/[\w.]/.test(r.flat.charAt(at-1)))continue;
+        if(PYKW[nm]||BUILTIN[nm]||bound[nm])continue;
+        if(/^__\w*__$/.test(nm))continue;           // supplied by the runtime
+        if(isKwarg(r.flat,at,at+nm.length))continue;
+        st.errs.push({line:i,col:at,len:nm.length,
+          msg:'"'+nm+'" is never assigned or imported'});
+      }
+    }
+    if(importing&&!st.stack.length&&!/\\[ \t]*$/.test(flat))importing=false;
 
     // blank or comment-only, and not part of a multi-line statement
     if(!code.trim()&&!nestedAtStart)continue;
@@ -272,4 +460,11 @@ function lintPy(src){
     st.errs.push({line:s.line,col:s.col,len:1,msg:"'"+s.ch+"' is never closed"});});
 
   return tidy(st.errs);
+}
+
+// names bound by a source, for handing the sibling files to lintPy
+function lintNames(src,into){
+  var o=into||{};
+  collectBindings(src,o);
+  return o;
 }

@@ -62,9 +62,26 @@ var er=document.getElementById('er');
 var ERRS=[];
 // draw wavy underlines on a transparent copy of the text, layered under the
 // caret. same font and wrapping as #hl, so the lines land in the right place.
+// names bound in the other open files, plus the whole of the current file when
+// we are zoomed into one of its blocks — the buffer is a dedented fragment
+// then, and its parameters live on a def line that is not in it.
+var knownCache=null, knownSig=null;
+function siblingNames(){
+  if(typeof lintNames!=='function'||typeof FILES==='undefined')return null;
+  var zoom=(typeof stack!=='undefined'&&stack.length)?1:0,sig='',k;
+  for(k in FILES)if(FILES.hasOwnProperty(k)&&k!==cur)sig+=k+':'+FILES[k].length+';';
+  if(zoom)sig+='@'+cur+':'+((FILES[cur]||'').length);
+  if(sig===knownSig)return knownCache;
+  var o={};
+  for(k in FILES)if(FILES.hasOwnProperty(k)&&k!==cur)lintNames(FILES[k],o);
+  if(zoom)lintNames(FILES[cur]||'',o);
+  knownSig=sig; knownCache=o;
+  return o;
+}
+
 function redline(ls){
   if(typeof lintPy!=='function')return;
-  ERRS=lintPy(ed.value);
+  ERRS=lintPy(ed.value,siblingNames());
   var bad={};
   ERRS.forEach(function(e){(bad[e.line]=bad[e.line]||[]).push(e);});
   if(er){
