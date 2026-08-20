@@ -52,6 +52,7 @@ function redline(ls){
       return html;
     }).join('\n')+'\n\n';
     er.scrollTop=ed.scrollTop;
+    erShown=ERRS.length>0;
   }
   if(!warn)return;
   if(ERRS.length){
@@ -73,7 +74,17 @@ if(warn)warn.addEventListener('click',function(){
   ed.selectionStart=ed.selectionEnd=Math.min(p,ed.value.length);
   ed.focus();
 });
+// #ed is transparent — #hl is the text you actually see — so the highlight has
+// to keep up with the caret and cannot be deferred. Everything else can. The
+// lint is a second full pass over the buffer and a second innerHTML write, and
+// mid-word it is reporting on a line you have not finished writing, so it runs
+// when you pause instead. Two full document rewrites per keypress was the lag.
+var praf=null, lintT=null, erShown=false, lastVal=null;
 function paint(){
+  if(praf!==null)return;         // one repaint per frame, not one per key
+  praf=requestAnimationFrame(function(){praf=null;paintNow();});
+}
+function paintNow(){
   hl.innerHTML=esc(ed.value).replace(RE,function(m,c,s,k,n,f){
     if(c)return '<span class="com">'+c+'</span>';
     if(s)return '<span class="str">'+s+'</span>';
@@ -82,12 +93,21 @@ function paint(){
     if(f)return '<span class="fn">'+f+'</span>';
     return m;})+'\n\n';
   hl.scrollTop=ed.scrollTop;
-  var ls=ed.value.split('\n'),mx=0,ov=0;
-  for(var i=0;i<ls.length;i++){
-    if(ls[i].length>mx)mx=ls[i].length;
-    if(ls[i].length>44)ov++;}
+  var ls=ed.value.split('\n'),mx=0;
+  for(var i=0;i<ls.length;i++)if(ls[i].length>mx)mx=ls[i].length;
   ct.textContent=ls.length+' ln · max '+mx;
-  redline(ls);
+  // the old squiggles describe text that has since moved; drop them rather
+  // than leave them underlining the wrong characters until the next lint
+  if(erShown&&er){er.innerHTML='';erShown=false;}
+  try{clearTimeout(lintT);}catch(e){}
+  lintT=setTimeout(function(){redline(ed.value.split('\n'));},220);
+  // The pad writes ed.value directly and #ed is inputmode="none", so the
+  // 'input' event store.js listens on never fires for a typed character. Every
+  // mutation repaints, so the save has to be triggered from here instead.
+  if(lastVal!==null&&lastVal!==ed.value&&typeof queue==='function'){
+    try{queue();}catch(e){}
+  }
+  lastVal=ed.value;
 }
 var T=null;
 function tgt(){return T||ed;}

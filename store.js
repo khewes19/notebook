@@ -25,8 +25,10 @@ if(!STORE){
   }catch(e){ SMODE='none'; }
 }
 
+var mstate=null;
 function mark(ok){
-  if(!dot)return;
+  if(!dot||mstate===ok)return;   // queue() calls this on every keystroke
+  mstate=ok;
   dot.className=ok?'ok':'';
   dot.textContent=ok?'•':'○';
   dot.title=SMODE==='none'?'not saving — memory only':'saving via '+SMODE;
@@ -38,15 +40,24 @@ if(dot)dot.addEventListener('click',function(){
     : 'saving via '+SMODE+' · '+Object.keys(FILES).length+' files'
     +(window.ghNote?' · ⇅ '+ghNote():'');
 });
+// stringify walks every file and localStorage.setItem is synchronous, so on a
+// 700 ms debounce the write lands squarely between two keystrokes of anyone
+// who types in bursts. Hand it to the browser to run when the main thread is
+// actually free; the timeout keeps it from being postponed forever.
+var idle=window.requestIdleCallback
+  ? function(fn){window.requestIdleCallback(fn,{timeout:2000});}
+  : function(fn){setTimeout(fn,1);};
 function persist(){
   if(!STORE){mark(false);return;}
-  try{
-    if(cur&&!stack.length)FILES[cur]=ed.value;
-    Promise.resolve()
-      .then(function(){return STORE.set(FK,JSON.stringify({v:2,files:FILES,notes:NOTES,cur:cur}));})
-      .then(function(){mark(true);if(window.ghQueue)ghQueue();})
-      .catch(function(){mark(false);});
-  }catch(e){mark(false);}
+  if(cur&&!stack.length)FILES[cur]=ed.value;
+  idle(function(){
+    try{
+      Promise.resolve()
+        .then(function(){return STORE.set(FK,JSON.stringify({v:2,files:FILES,notes:NOTES,cur:cur}));})
+        .then(function(){mark(true);if(window.ghQueue)ghQueue();})
+        .catch(function(){mark(false);});
+    }catch(e){mark(false);}
+  });
 }
 function queue(){
   try{clearTimeout(tsave);}catch(e){}
