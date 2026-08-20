@@ -75,6 +75,12 @@ box-shadow:0 1px 0 var(--ksh)}
 .row button::after{content:'';position:absolute;
 left:-3px;right:-3px;top:-6px;bottom:-6px}
 #code button::after,#code2 button::after{left:-3px;right:-3px;top:-5px;bottom:-6px}
+/* the pad's own padding is dead space too, and the edges are where a thumb
+   lands: low on the space bar, or wide of the outermost key. reach into it. */
+#code button::after{top:-9px}
+#r4 button::after{bottom:-9px}
+.row button:first-child::after{left:-5px}
+.row button:last-child::after{right:-5px}
 .row button{-webkit-user-select:none;user-select:none}
 .wide{flex:2 1 0 !important}
 .sp{flex:4 1 0 !important}
