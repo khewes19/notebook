@@ -1,0 +1,219 @@
+window.addEventListener('error',function(e){
+  try{
+    var w=document.getElementById('warn');
+    if(w)w.textContent='⚠ '+(e.message||'script error');
+  }catch(_){}
+});
+window.addEventListener('unhandledrejection',function(e){
+  try{e.preventDefault();}catch(_){}
+});
+var wrap=document.getElementById('wrap');
+var ed=document.getElementById('ed'), hl=document.getElementById('hl'),
+    ct=document.getElementById('ct'), warn=document.getElementById('warn');
+var shift=false, page=0;
+
+// every model call goes through here.
+// point it at your own proxy (tailscale / worker) once the key lives there.
+var API='https://api.anthropic.com';
+
+var KW='def|class|return|yield|if|elif|else|for|while|break|continue|pass|'
+     +'import|from|as|with|try|except|finally|raise|lambda|and|or|not|in|is|'
+     +'None|True|False|self|assert|global|nonlocal|del|async|await';
+var RE=new RegExp('(#[^\\n]*)'
+ +'|("""[\\s\\S]*?"""|\'\'\'[\\s\\S]*?\'\'\'|"(?:[^"\\\\\\n]|\\\\.)*"|\'(?:[^\'\\\\\\n]|\\\\.)*\')'
+ +'|\\b('+KW+')\\b|\\b(\\d+\\.?\\d*(?:[eE][-+]?\\d+)?)\\b|([A-Za-z_]\\w*)(?=\\s*\\()','g');
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+var er=document.getElementById('er');
+var ERRS=[];
+// draw wavy underlines on a transparent copy of the text, layered under the
+// caret. same font and wrapping as #hl, so the lines land in the right place.
+function redline(ls){
+  if(typeof lintPy!=='function')return;
+  ERRS=lintPy(ed.value);
+  var bad={};
+  ERRS.forEach(function(e){bad[e.line]=e.msg;});
+  if(er){
+    er.innerHTML=ls.map(function(l,i){
+      var t=esc(l)||' ';
+      return bad.hasOwnProperty(i)?'<span class="bad">'+t+'</span>':t;
+    }).join('\n')+'\n\n';
+    er.scrollTop=ed.scrollTop;
+  }
+  if(!warn)return;
+  if(ERRS.length){
+    warn.className='';
+    warn.textContent='⚠ line '+(ERRS[0].line+1)+' — '+ERRS[0].msg
+      +(ERRS.length>1?'  (+'+(ERRS.length-1)+')':'');
+  }else{
+    var ov=0;
+    for(var i=0;i<ls.length;i++)if(ls[i].length>44)ov++;
+    warn.className='';
+    warn.textContent=ov?ov+' over 44':'';
+  }
+}
+// tap the warn bar to jump to the first error
+if(warn)warn.addEventListener('click',function(){
+  if(!ERRS.length)return;
+  var p=ed.value.split('\n').slice(0,ERRS[0].line).join('\n').length;
+  ed.selectionStart=ed.selectionEnd=ERRS[0].line?p+1:0;
+  ed.focus();
+});
+function paint(){
+  hl.innerHTML=esc(ed.value).replace(RE,function(m,c,s,k,n,f){
+    if(c)return '<span class="com">'+c+'</span>';
+    if(s)return '<span class="str">'+s+'</span>';
+    if(k)return '<span class="kw">'+k+'</span>';
+    if(n)return '<span class="num">'+n+'</span>';
+    if(f)return '<span class="fn">'+f+'</span>';
+    return m;})+'\n\n';
+  hl.scrollTop=ed.scrollTop;
+  var ls=ed.value.split('\n'),mx=0,ov=0;
+  for(var i=0;i<ls.length;i++){
+    if(ls[i].length>mx)mx=ls[i].length;
+    if(ls[i].length>44)ov++;}
+  ct.textContent=ls.length+' ln · max '+mx;
+  redline(ls);
+}
+var T=null;
+function tgt(){return T||ed;}
+function ins(t,back){
+  var x=tgt(),s=x.selectionStart,e=x.selectionEnd,v=x.value;
+  x.value=v.slice(0,s)+t+v.slice(e);
+  x.selectionStart=x.selectionEnd=s+t.length-(back||0);
+  x.focus(); if(x===ed)paint();
+}
+function dedent(){
+  var v=ed.value,s=ed.selectionStart,ls=v.lastIndexOf('\n',s-1)+1,
+      m=v.slice(ls).match(/^ {1,4}/);
+  if(!m)return;
+  ed.value=v.slice(0,ls)+v.slice(ls+m[0].length);
+  ed.selectionStart=ed.selectionEnd=Math.max(ls,s-m[0].length);
+  ed.focus(); paint();
+}
+function back(){
+  var x=tgt(),s=x.selectionStart,e=x.selectionEnd,v=x.value;
+  var ed=x;
+  if(s!==e){ed.value=v.slice(0,s)+v.slice(e);
+    ed.selectionStart=ed.selectionEnd=s; ed.focus(); paint(); return;}
+  if(s===0)return;
+  var ls=v.lastIndexOf('\n',s-1)+1, pre=v.slice(ls,s), n=1;
+  if(pre.length&&pre.length%4===0&&/^ +$/.test(pre))n=4;
+  ed.value=v.slice(0,s-n)+v.slice(s);
+  ed.selectionStart=ed.selectionEnd=s-n;
+  ed.focus(); paint();
+}
+function enter(){
+  var x=tgt(),v=x.value,s=x.selectionStart,ls=v.lastIndexOf('\n',s-1)+1,
+      line=v.slice(ls,s), ind=(line.match(/^ */)||[''])[0];
+  if(/:\s*$/.test(line))ind+='    ';
+  ins('\n'+ind);
+}
+function mk(host,label,fn,cls){
+  var b=document.createElement('button');
+  b.textContent=label;
+  if(cls)b.className=cls;
+  b.addEventListener('pointerdown',function(e){
+    e.preventDefault();
+    b.classList.add('hit');
+    fn();
+    if(navigator.vibrate)navigator.vibrate(3);
+  });
+  b.addEventListener('pointerup',function(){b.classList.remove('hit');});
+  b.addEventListener('pointercancel',function(){b.classList.remove('hit');});
+  b.addEventListener('pointerleave',function(){b.classList.remove('hit');});
+  host.appendChild(b);
+  return b;
+}
+function fill(host,chars){
+  host.innerHTML='';
+  chars.split('').forEach(function(c){
+    mk(host,shift?c.toUpperCase():c,function(){ins(shift?c.toUpperCase():c);});
+  });
+}
+
+var CODE=[['⇥',function(){ins('    ');}],['⇤',dedent],[':',function(){ins(':');}],
+['(',function(){ins('()',1);}],[')',function(){ins(')');}],
+['[',function(){ins('[]',1);}],[']',function(){ins(']');}],
+['"',function(){ins('""',1);}],['_',function(){ins('_');}],
+['=',function(){ins(' = ');}],['.',function(){ins('.');}],
+[',',function(){ins(', ');}],['self',function(){ins('self');}],
+['def',function(){ins('def ');}],['<',function(){ins(' < ');}],
+['>',function(){ins(' > ');}],['#',function(){ins('# ');}]];
+CODE.forEach(function(k){mk(document.getElementById('code'),k[0],k[1]);});
+
+var r1=document.getElementById('r1'),r2=document.getElementById('r2'),
+    r3=document.getElementById('r3'),r4=document.getElementById('r4');
+
+function render(){
+  if(page===0){
+    fill(r1,'qwertyuiop'); fill(r2,'asdfghjkl');
+    r3.innerHTML='';
+    mk(r3,shift?'⇧':'⇧',function(){shift=!shift;render();},'wide');
+    'zxcvbnm'.split('').forEach(function(c){
+      mk(r3,shift?c.toUpperCase():c,function(){ins(shift?c.toUpperCase():c);});});
+    mk(r3,'⌫',back,'wide');
+  }else{
+    fill(r1,'1234567890'); 
+    r2.innerHTML='';
+    ['-','+','*','/','%','{','}','|','&','^'].forEach(function(c){
+      mk(r2,c,function(){ins(c);});});
+    r3.innerHTML='';
+    ['!','?',';','@','$','~',"'",'\\'].forEach(function(c){
+      mk(r3,c,function(){ins(c);});});
+    mk(r3,'⌫',back,'wide');
+  }
+  r4.innerHTML='';
+  mk(r4,page===0?'123':'abc',function(){page=1-page;shift=false;render();},'wide');
+  var sb=mk(r4,'space',function(){ins(' ');},'sp'); sb.style.fontSize='15px';
+  mk(r4,'⏎',enter,'wide');
+}
+render();
+
+ed.addEventListener('input',paint);
+ed.addEventListener('scroll',function(){
+  hl.scrollTop=ed.scrollTop;
+  if(er)er.scrollTop=ed.scrollTop;
+});
+ed.addEventListener('keydown',function(e){
+  if(e.key==='Tab'){e.preventDefault();e.shiftKey?dedent():ins('    ');}
+});
+
+document.getElementById('copy').addEventListener('click',function(){
+  ed.select(); document.execCommand('copy');
+  ed.selectionStart=ed.selectionEnd=ed.value.length;
+  var b=this; b.textContent='✓';
+  setTimeout(function(){b.textContent='Copy';},1000);
+});
+
+var zoom=document.getElementById('zoom');
+var K=0.8125, FS=13;
+function setFs(v){
+  K=Math.max(0.5,Math.min(1.6,v/16));
+  FS=Math.round(16*K);
+  zoom.style.transform='scale('+K+')';
+  zoom.style.width=(100/K)+'%';
+  zoom.style.height=(100/K)+'%';
+}
+setFs(13);
+
+['gesturestart','gesturechange','gestureend'].forEach(function(t){
+  document.addEventListener(t,function(e){e.preventDefault();},{passive:false});
+});
+
+function dist(e){
+  var a=e.touches[0],b=e.touches[1];
+  return Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+}
+var d0=0,f0=13;
+wrap.addEventListener('touchstart',function(e){
+  if(e.touches.length===2){d0=dist(e);f0=FS;}
+},{passive:false});
+wrap.addEventListener('touchmove',function(e){
+  if(e.touches.length===2&&d0>0){
+    e.preventDefault();
+    setFs(f0*dist(e)/d0);
+  }
+},{passive:false});
+wrap.addEventListener('touchend',function(){d0=0;});
+wrap.addEventListener('touchcancel',function(){d0=0;});
