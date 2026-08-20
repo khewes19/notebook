@@ -55,6 +55,7 @@ function panel(mode){
     d.className='hdr'; d.textContent=t; list.appendChild(d);};
 
   if(mode==='tree'){
+    if(window.ghPanel)ghPanel(list,redraw);
     hdr('files');
     Object.keys(FILES).sort().forEach(function(k){
       var row=add(k,'file:'+k,function(){openFile(k);},k===cur?'cur':'');

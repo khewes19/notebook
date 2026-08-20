@@ -35,7 +35,8 @@ if(dot)dot.addEventListener('click',function(){
   var w=document.getElementById('warn');
   if(w)w.textContent=SMODE==='none'
     ? '⚠ no storage backend — copy your work out before closing'
-    : 'saving via '+SMODE+' · '+Object.keys(FILES).length+' files';
+    : 'saving via '+SMODE+' · '+Object.keys(FILES).length+' files'
+    +(window.ghNote?' · ⇅ '+ghNote():'');
 });
 function persist(){
   if(!STORE){mark(false);return;}
@@ -43,7 +44,7 @@ function persist(){
     if(cur&&!stack.length)FILES[cur]=ed.value;
     Promise.resolve()
       .then(function(){return STORE.set(FK,JSON.stringify({v:2,files:FILES,notes:NOTES,cur:cur}));})
-      .then(function(){mark(true);})
+      .then(function(){mark(true);if(window.ghQueue)ghQueue();})
       .catch(function(){mark(false);});
   }catch(e){mark(false);}
 }
@@ -74,8 +75,8 @@ function restore(){
         draw();
       }
     }
-    mark(true);
-  }).catch(function(){mark(false);});
+    mark(true); window.RESTORED=1; if(window.ghBoot)ghBoot();
+  }).catch(function(){mark(false);window.RESTORED=1;if(window.ghBoot)ghBoot();});
 }
 restore();
 
