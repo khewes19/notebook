@@ -318,8 +318,47 @@ function ghPanel(host,redraw){
     GSHA={}; GBASE={}; GDIRTY=true;   // a different repo shares no history
     ghCfgSave();
     if(!ghOn()){ghStat('off');redraw();return;}
+
+    // A token typed by hand on a phone is almost never right — a fine-grained
+    // one is about ninety characters. Say so before spending a round trip.
+    if(!/^(github_pat_|ghp_|gho_|ghs_)/.test(GH.token)){
+      ghStat('err','that does not look like a token — it should begin '
+        +'github_pat_ (fine-grained) or ghp_ (classic)');
+      redraw(); return;
+    }
+    if(/^github_pat_/.test(GH.token)&&GH.token.length<60){
+      ghStat('err','token looks cut short at '+GH.token.length
+        +' characters — copy and paste it rather than typing it');
+      redraw(); return;
+    }
+
     ghStat('pull');
-    ghApi('/repos/'+ghSlug()).then(function(){
+    // Ask who we are before asking about the repo. Otherwise a bad token and a
+    // missing repo both arrive as one unhelpful 404, and they need opposite
+    // fixes. /user answers for any valid token, whatever repos it can reach.
+    var who='';
+    ghApi('/user').then(function(u){
+      who=(u&&u.login)||'?';
+    },function(e){
+      // only a 401 is conclusive. a fine-grained token scoped to one repo may
+      // legitimately be refused elsewhere, so anything else carries on and
+      // lets the repo check give the real answer.
+      if(e.status===401)
+        throw new Error('github rejected the token — paste it whole; ninety '
+          +'characters cannot be retyped');
+      who='?';
+    }).then(function(){
+      return ghApi('/repos/'+ghSlug()).catch(function(e){
+        if(e.status===404)
+          throw new Error('signed in as '+who+', but '+ghSlug()+' is not '
+            +'visible — create the repo, or add it to the token’s selected '
+            +'repositories');
+        if(e.status===403)
+          throw new Error('signed in as '+who+' — the token needs Contents: '
+            +'read and write on '+ghSlug());
+        throw e;
+      });
+    }).then(function(){
       return ghApi('/repos/'+ghSlug()+'/git/trees/'
                    +encodeURIComponent(GH.branch)+'?recursive=1')
         .catch(function(e){if(e.status===409)return {tree:[]};throw e;});
@@ -331,9 +370,9 @@ function ghPanel(host,redraw){
       });
       return has?ghPull():ghPush();
     }).then(function(){redraw();},function(e){
-      ghStat('err',e.status===404
-        ?'no such repo, or the token cannot see it'
-        :(e.message||'connect failed'));
+      // the steps above already say which of the four things went wrong;
+      // anything reaching here is a surprise and is reported verbatim.
+      ghStat('err',e.message||'connect failed');
       redraw();
     });
   });
