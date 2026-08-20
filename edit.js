@@ -26,8 +26,6 @@ var BI='abs|all|any|bool|bytes|callable|chr|dict|dir|divmod|enumerate|filter|'
      +'issubclass|iter|len|list|map|max|min|next|object|open|ord|pow|print|'
      +'range|repr|reversed|round|set|setattr|sorted|str|sum|super|tuple|type|'
      +'vars|zip';
-var STR='"""[\\s\\S]*?"""|\'\'\'[\\s\\S]*?\'\'\''
-      +'|"(?:[^"\\\\\\n]|\\\\.)*"|\'(?:[^\'\\\\\\n]|\\\\.)*\'';
 // One branch for every identifier, and the word decides its own class from a
 // hash. Spelling the keywords and the fifty builtins out as regex alternatives
 // made the engine try eighty literals at every word boundary in the file, three
@@ -57,15 +55,27 @@ BI.split('|').forEach(function(w){BISET[w]=1;});
 // match is a dot, a comma, a colon, a backslash or whitespace, none of which
 // need escaping. It also retires the entity-splitting hazard the operator
 // branch used to carry.
-var RE=new RegExp(
-   '(#[^\\n]*)'                                     // 1 comment
- +'|([rbfuRBFU]{0,2}(?:'+STR+'))'                   // 2 string
- +'|(@[A-Za-z_][\\w.]*)'                            // 3 decorator
- +'|(\\d+\\.?\\d*(?:[eE][-+]?\\d+)?)'               // 4 number
- +'|([A-Za-z_]\\w*)'                                // 5 word
- +'|([\\[\\](){}])'                                 // 6 bracket
+// Line at a time, so a keystroke can repaint one line instead of the document.
+// Nothing here crosses a newline: a triple-quoted string that opens and does
+// not close becomes an opener, and the state is carried into the next line.
+// The three string forms are separate branches, and in this order, because an
+// unterminated """ has to be recognised before the ordinary quote alternative
+// gets to it — that one happily matches the first two quotes as an empty
+// string and leaves the third behind.
+var PFX='[rbfuRBFU]{0,2}';
+var LRE=new RegExp(
+   '(#.*)'                                          // 1 comment
+ +'|('+PFX+'(?:"""(?:[^\\\\]|\\\\.)*?"""'           // 2 triple, closed here
+       +'|\'\'\'(?:[^\\\\]|\\\\.)*?\'\'\'))'
+ +'|('+PFX+'(?:"""|\'\'\'))'                        // 3 triple, left open
+ +'|('+PFX+'(?:"(?:[^"\\\\]|\\\\.)*"'               // 4 quoted, closed here
+       +'|\'(?:[^\'\\\\]|\\\\.)*\'))'
+ +'|(@[A-Za-z_][\\w.]*)'                            // 5 decorator
+ +'|(\\d+\\.?\\d*(?:[eE][-+]?\\d+)?)'               // 6 number
+ +'|([A-Za-z_]\\w*)'                                // 7 word
+ +'|([\\[\\](){}])'                                 // 8 bracket
  +'|(->|<=|>=|==|!=|\\*\\*|//|[-+*/%=|^~<>&])'
- ,'g');                                             // 7 operator
+ ,'g');                                             // 9 operator
 
 function sp(c,t){return '<span class="'+c+'">'+t+'</span>';}
 
@@ -219,27 +229,92 @@ var slowMs=0, keyMs=0, keyT0=0;
 var now=(window.performance&&performance.now)
   ? function(){return performance.now();} : function(){return 0;};
 
+// One line's markup, given what the line above left open. Returns the state
+// the next line inherits: whether a triple quote is still open, and how deep
+// the brackets are, which is what decides a bracket's colour.
+function renderLine(text,tri,depth){
+  var out='',m,last=0,s=text;
+  if(tri){
+    var e=text.indexOf(tri);
+    if(e<0)return {html:sp('str',esc(text)),tri:tri,depth:depth};
+    out+=sp('str',esc(text.slice(0,e+3)));
+    s=text.slice(e+3);
+    tri=null;
+  }
+  bdepth=depth; pendDfn=false;
+  LRE.lastIndex=0;
+  while((m=LRE.exec(s))!==null){
+    // the gaps are dots, commas, colons and whitespace — never < > or &,
+    // which are all operators — so they pass through unescaped, and they
+    // must not clear pendDfn: "def" and its name are separated by one.
+    if(m.index>last)out+=s.slice(last,m.index);
+    last=m.index+m[0].length;
+    if(m[7]){out+=word(m[7],s,last);continue;}
+    pendDfn=false;
+    if(m[1]){out+=sp('com',esc(m[1]));continue;}
+    if(m[2]||m[4]){out+=sp('str',esc(m[2]||m[4]));continue;}
+    if(m[3]){                       // opens here, closes on some later line
+      out+=sp('str',esc(s.slice(m.index)));
+      return {html:out,tri:m[3].slice(-3),depth:bdepth};
+    }
+    if(m[5]){out+=sp('dec',m[5]);continue;}
+    if(m[6]){out+=sp('num',m[6]);continue;}
+    if(m[8]){out+=brk(m[8]);continue;}
+    if(m[9]){out+=sp('op',OPESC[m[9]]||m[9]);continue;}
+  }
+  out+=s.slice(last);
+  return {html:out,tri:null,depth:bdepth};
+}
+
+// Each line's markup lives in an inline span, and the newlines between them
+// are real newline characters exactly as before — an inline box does not
+// create a line box of its own, so #hl wraps identically to #ed and identically
+// to how it did when this was one string. That is the whole reason for doing it
+// this way rather than a block per line.
+var LTEXT=[], LOUT=[];
+
+function fullPaint(ls){
+  var html=[],tri=null,depth=0,i,r;
+  LTEXT=ls.slice(); LOUT=new Array(ls.length);
+  for(i=0;i<ls.length;i++){
+    r=renderLine(ls[i],tri,depth);
+    LOUT[i]={inTri:tri,inDepth:depth,tri:r.tri,depth:r.depth};
+    html.push('<span>'+r.html+'</span>');
+    tri=r.tri; depth=r.depth;
+  }
+  hl.innerHTML=html.join('\n')+'\n\n';
+}
+
+// Repaint from the first changed line, and keep going only while the state
+// handed to a line differs from the state it was last drawn with. Typing in
+// the middle of a file stops after one line; opening a bracket or a docstring
+// carries on down, because those genuinely change what follows.
+function linePaint(ls){
+  var n=ls.length,i=0,kids=hl.children;
+  while(i<n&&ls[i]===LTEXT[i])i++;
+  if(i>=n)return;
+  var tri=i?LOUT[i-1].tri:null, depth=i?LOUT[i-1].depth:0;
+  for(var j=i;j<n;j++){
+    if(j>i&&ls[j]===LTEXT[j]&&LOUT[j].inTri===tri&&LOUT[j].inDepth===depth)break;
+    var r=renderLine(ls[j],tri,depth);
+    if(kids[j])kids[j].innerHTML=r.html;
+    LTEXT[j]=ls[j];
+    LOUT[j]={inTri:tri,inDepth:depth,tri:r.tri,depth:r.depth};
+    tri=r.tri; depth=r.depth;
+  }
+}
+
 function paintNow(){
   var t0=now();
-  bdepth=0; pendDfn=false;
   // one read of .value for the whole pass — it is a getter on a form control,
   // not a plain property, and this used to touch it four times per frame
   var v=ed.value;
-  // only comments, strings and operators can hold < > or &, so only they are
-  // escaped; identifiers, numbers and brackets never need it.
-  hl.innerHTML=v.replace(RE,
-    function(m,com,str,dec,num,wd,br,op,at,whole){
-      if(wd)return word(wd,whole,at+m.length);
-      pendDfn=false;                      // whitespace never reaches here
-      if(com)return sp('com',esc(com));
-      if(str)return sp('str',esc(str));
-      if(dec)return sp('dec',dec);
-      if(num)return sp('num',num);
-      if(br)return brk(br);
-      if(op)return sp('op',OPESC[op]||op);
-      return m;})+'\n\n';
+  var ls=v.split('\n');
+  // adding or removing a line moves every span after it, so that case rebuilds
+  if(ls.length!==LTEXT.length||hl.children.length!==ls.length)fullPaint(ls);
+  else linePaint(ls);
   hl.scrollTop=ed.scrollTop;
-  var ls=v.split('\n'),mx=0;
+  var mx=0;
   for(var i=0;i<ls.length;i++)if(ls[i].length>mx)mx=ls[i].length;
   // the key figure is key-down to painted, which includes the wait for the
   // frame; the repaint on its own is in the dot's tap message.

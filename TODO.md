@@ -38,24 +38,6 @@ question to about the file in front of you, rather than a fixed five-line
 review prompt. That wants a small conversation UI in the cell, and history,
 which the cell does not have yet.
 
-## the repaint, if it stays slow
-
-Every keystroke re-tokenises the whole buffer and rewrites `#hl` wholesale,
-because `#ed` is transparent and `#hl` is the text you see. The cost therefore
-scales with the file rather than with what was typed.
-
-The fix is to split `#hl` into one element per line and touch only the line
-that changed. Two things make it real work rather than a tidy-up: a triple
-quoted string means an edit on one line can change how every line below it
-tokenises, so the open-string state has to be tracked per line and the repaint
-extended downwards when it changes; and `#hl` has to keep wrapping *pixel*
-identically to `#ed`, or the highlight and the squiggles drift away from the
-caret. That second one cannot be checked except on the device.
-
-Two rounds of micro-optimisation have not settled this. Before spending the
-refactor, get the key-down-to-painted number the counter now reports — if it
-is inside a frame, the cost is not here and this would be wasted.
-
 ## haptics
 
 The pad calls `navigator.vibrate(3)` on every key. iOS Safari does not
