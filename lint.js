@@ -129,12 +129,13 @@ function findBareEq(s,from){
 }
 
 // ---- names -----------------------------------------------------------------
-// A name that is bound nowhere in any open file cannot resolve at runtime, and
-// that is the only claim this rule makes. It deliberately ignores scope: a
-// function may reference a global defined further down the file, a name bound
-// in one branch is visible in another, and a helper may live in a sibling file.
-// So bindings are over-collected on purpose — every miss here would surface as
-// a false squiggle, while an over-collected name only costs a missed report.
+// Two things live here. collectBindings is the flat version, still used to hand
+// lintPy the names bound by the *other* open files, which have no scope
+// relationship to this one. The scoped version further down is what the check
+// actually resolves against.
+// Either way bindings are over-collected on purpose: a name bound by a
+// construct this misses would show up as a squiggle under working code, which
+// costs far more than the report it would otherwise have missed.
 
 var PYKW={};
 ('False None True and as assert async await break class continue def del elif '
@@ -299,12 +300,12 @@ function lintPy(src,known){
   var stmtCompound=false;
   var lastAt={};         // indent column -> keyword the last statement there began with
 
-  var bound={},kn;
-  if(known)for(kn in known)if(known.hasOwnProperty(kn))bound[kn]=1;
-  collectBindings(src,bound);
+  var outer={},kn;
+  if(known)for(kn in known)if(known.hasOwnProperty(kn))outer[kn]=1;
+  var scoped=buildScopes(src);
   // after "from x import *" any name at all might exist, so the whole check
   // has to stand down rather than guess.
-  var checkNames=!bound['*'];
+  var checkNames=!scoped.module.names['*']&&!outer['*'];
   var importing=false;
 
   for(var i=0;i<lines.length;i++){
@@ -339,11 +340,14 @@ function lintPy(src,known){
         var nm=um[0],at=um.index;
         // an attribute is not a name, and 1e5 is not a use of "e5"
         if(at>0&&/[\w.]/.test(r.flat.charAt(at-1)))continue;
-        if(PYKW[nm]||BUILTIN[nm]||bound[nm])continue;
+        if(PYKW[nm]||BUILTIN[nm]||outer[nm])continue;
         if(/^__\w*__$/.test(nm))continue;           // supplied by the runtime
         if(isKwarg(r.flat,at,at+nm.length))continue;
+        var here=scoped.scopeOf[i]||scoped.module;
+        if(visible(here,nm))continue;
+        if(scoped.header[i]&&here.parent&&visible(here.parent,nm))continue;
         st.errs.push({line:i,col:at,len:nm.length,
-          msg:'"'+nm+'" is never assigned or imported'});
+          msg:'"'+nm+'" is not defined in this scope'});
       }
     }
     if(importing&&!st.stack.length&&!/\\[ \t]*$/.test(flat))importing=false;
@@ -445,8 +449,12 @@ function lintPy(src,known){
     // the colon lives at the end of the whole statement, which for a
     // multi-line header is not the line the keyword was on.
     if(complete){
+      // the colon has to be there, but it does not have to be last: "if a: pass"
+      // and "def f(x): return x" put the body on the same line. code is the
+      // mask, so a colon found in it is at depth zero and never one from a dict
+      // display or a slice.
       var tail=flat.slice(-1);
-      if(stmtCompound&&tail!==':'&&tail!=='\\')
+      if(stmtCompound&&code.indexOf(':')<0&&tail!=='\\')
         st.errs.push({line:i,col:Math.max(0,flat.length-1),len:1,msg:'missing ":"'});
       opensBlock=tail===':';
       continues=tail==='\\';
@@ -467,4 +475,124 @@ function lintNames(src,into){
   var o=into||{};
   collectBindings(src,o);
   return o;
+}
+
+// ---- scopes ----------------------------------------------------------------
+// Python resolves a name against the scope it is written in, then the enclosing
+// functions, then the module, then the builtins — and never against a sibling
+// function's locals. Indentation is enough to rebuild that here: a def or class
+// header opens a scope, and its body is everything indented past it.
+// A class body is skipped on the way out, because a method genuinely cannot see
+// the class's own attributes without going through self.
+// Within one scope the order does not matter: python decides what is local to a
+// function from the whole body before running a line of it.
+
+function newScope(kind,indent,parent){
+  return {kind:kind,indent:indent,names:{},parent:parent};
+}
+
+// every name a statement binds, into the scope the statement was written in
+function bindStatement(text,head,flats,masks,from,to,sc,mod){
+  var m,q;
+  // these two reach past the scope they are written in, which is the point
+  if((m=text.match(/^[ \t]*global\b([\s\S]*)$/))!==null){
+    bindIdents(m[1],mod.names); return;
+  }
+  if((m=text.match(/^[ \t]*nonlocal\b([\s\S]*)$/))!==null){
+    var up=sc.parent;
+    while(up&&up.kind!=='def')up=up.parent;
+    bindIdents(m[1],(up||mod).names);
+    return;
+  }
+  if(/^[ \t]*(from|import)\b/.test(head)){
+    if(/(^|[\s,(])\*/.test(text))mod.names['*']=1;
+    bindIdents(text,sc.names);
+    return;
+  }
+
+  var lre=/\blambda\b/g;
+  while((m=lre.exec(text))!==null){
+    var c=text.indexOf(':',m.index);
+    if(c>m.index)bindIdents(text.slice(m.index+6,c),sc.names);
+  }
+  var fre=/\bfor\b([\s\S]*?)\bin\b/g;
+  while((m=fre.exec(text))!==null)bindIdents(m[1],sc.names);
+  var are=/\bas[ \t]+([A-Za-z_]\w*)/g;
+  while((m=are.exec(text))!==null)sc.names[m[1]]=1;
+  var wre=/([A-Za-z_]\w*)\s*:=/g;
+  while((m=wre.exec(text))!==null)sc.names[m[1]]=1;
+  m=head.match(/^[ \t]*([A-Za-z_]\w*)[ \t]*:[ \t]*[^=\s][^\n]*$/);
+  if(m&&!PYKW[m[1]])sc.names[m[1]]=1;
+
+  // assignment targets: the mask copy has bracket contents blanked, so an '='
+  // found there is the statement's own operator and never a keyword argument.
+  for(q=from;q<=to;q++){
+    var eq=-1,at=0,nx;
+    for(;;){nx=findBareEq(masks[q],at);if(nx<0)break;eq=nx;at=nx+1;}
+    if(eq>0)bindIdents(flats[q].slice(0,eq),sc.names);
+  }
+}
+
+function buildScopes(src){
+  var st={q:null,qcol:0,tri:null,triLine:0,triCol:0,stack:[],errs:[],line:0};
+  var lines=src.split('\n'),flats=[],masks=[],open=[],i,q;
+  for(i=0;i<lines.length;i++){
+    st.line=i;
+    var r=scanLine(lines[i],st);
+    flats.push(r.flat); masks.push(r.mask);
+    open.push((st.stack.length||st.tri)?1:0);
+  }
+
+  var mod=newScope('module',-1,null);
+  var stk=[mod], scopeOf=new Array(lines.length), hdr=new Array(lines.length);
+  i=0;
+  while(i<lines.length){
+    // a logical statement runs until brackets close and no backslash trails
+    var k=i;
+    while(k<lines.length-1&&(open[k]||/\\[ \t]*$/.test(flats[k])))k++;
+    var head=flats[i].replace(/\s+$/,'');
+    if(!head.length){
+      for(q=i;q<=k;q++)scopeOf[q]=stk[stk.length-1];
+      i=k+1; continue;
+    }
+    var ind=(lines[i].match(/^[ \t]*/)||[''])[0].length;
+    while(stk.length>1&&stk[stk.length-1].indent>=ind)stk.pop();
+    var top=stk[stk.length-1];
+    var text=flats.slice(i,k+1).join('\n');
+
+    var dm=head.match(/^[ \t]*(?:async[ \t]+)?(def|class)[ \t]+([A-Za-z_]\w*)/);
+    if(dm){
+      top.names[dm[2]]=1;              // the name belongs to the enclosing scope
+      var child=newScope(dm[1]==='class'?'class':'def',ind,top);
+      if(dm[1]==='def'){
+        var after=dm.index+dm[0].length;
+        var op=text.indexOf('(',after);
+        if(op>=0&&!/[^ \t]/.test(text.slice(after,op)))
+          bindIdents(spanTo(text,op),child.names);
+      }
+      // the header lines resolve against the child, so that a one-line body
+      // like "def f(x): return x" can still see x. they are also marked as
+      // headers, because everything else on that line — the method's own name,
+      // a default value, a base class — is read in the enclosing scope, and
+      // that scope may be a class body the child is not allowed to see through.
+      for(q=i;q<=k;q++){scopeOf[q]=child;hdr[q]=1;}
+      stk.push(child);
+    }else{
+      for(q=i;q<=k;q++)scopeOf[q]=top;
+      bindStatement(text,head,flats,masks,i,k,top,mod);
+    }
+    i=k+1;
+  }
+  return {scopeOf:scopeOf,header:hdr,module:mod};
+}
+
+// the scope chain, with class bodies skipped once we have stepped out of one
+function visible(sc,nm){
+  var first=true;
+  while(sc){
+    if((first||sc.kind!=='class')&&sc.names[nm])return true;
+    first=false;
+    sc=sc.parent;
+  }
+  return false;
 }

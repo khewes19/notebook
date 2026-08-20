@@ -60,8 +60,6 @@ function brk(ch){
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 var er=document.getElementById('er');
 var ERRS=[];
-// draw wavy underlines on a transparent copy of the text, layered under the
-// caret. same font and wrapping as #hl, so the lines land in the right place.
 // names bound in the other open files, plus the whole of the current file when
 // we are zoomed into one of its blocks — the buffer is a dedented fragment
 // then, and its parameters live on a def line that is not in it.
@@ -79,9 +77,24 @@ function siblingNames(){
   return o;
 }
 
+// the line the caret sits on is still being written; a half-typed line is
+// always wrong, and squiggling it while you are on it is just noise. it gets
+// judged when you leave. counted rather than sliced — this runs on every
+// selection change.
+function caretLine(){
+  if(document.activeElement!==ed)return -1;
+  var p=ed.selectionStart||0,v=ed.value,n=0;
+  for(var i=0;i<p&&i<v.length;i++)if(v.charAt(i)==='\n')n++;
+  return n;
+}
+
+// draw wavy underlines on a transparent copy of the text, layered under the
+// caret. same font and wrapping as #hl, so the lines land in the right place.
 function redline(ls){
   if(typeof lintPy!=='function')return;
-  ERRS=lintPy(ed.value,siblingNames());
+  var here=caretLine(),all=lintPy(ed.value,siblingNames()),keep=[];
+  for(var q=0;q<all.length;q++)if(all[q].line!==here)keep.push(all[q]);
+  ERRS=keep;
   var bad={};
   ERRS.forEach(function(e){(bad[e.line]=bad[e.line]||[]).push(e);});
   if(er){
@@ -278,6 +291,24 @@ ed.addEventListener('scroll',function(){
   hl.scrollTop=ed.scrollTop;
   if(er)er.scrollTop=ed.scrollTop;
 });
+
+// crossing into another line judges the one just left and quiets the one just
+// entered, so the lint has to run on caret movement and not only on edits.
+// leaving the editor entirely counts as leaving the line, and everything is
+// judged again.
+var lastLine=-1;
+function caretWatch(){
+  var l=caretLine();
+  if(l===lastLine)return;
+  lastLine=l;
+  try{clearTimeout(lintT);}catch(e){}
+  lintT=setTimeout(function(){redline(ed.value.split('\n'));},120);
+}
+document.addEventListener('selectionchange',caretWatch);
+ed.addEventListener('click',caretWatch);
+ed.addEventListener('keyup',caretWatch);
+ed.addEventListener('blur',caretWatch);
+ed.addEventListener('focus',caretWatch);
 ed.addEventListener('keydown',function(e){
   if(e.key==='Tab'){e.preventDefault();e.shiftKey?dedent():ins('    ');}
 });
