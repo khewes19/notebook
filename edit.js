@@ -26,28 +26,65 @@ var BI='abs|all|any|bool|bytes|callable|chr|dict|dir|divmod|enumerate|filter|'
      +'vars|zip';
 var STR='"""[\\s\\S]*?"""|\'\'\'[\\s\\S]*?\'\'\''
       +'|"(?:[^"\\\\\\n]|\\\\.)*"|\'(?:[^\'\\\\\\n]|\\\\.)*\'';
-// Order is the whole design here. Strings and comments come first so nothing
-// inside them is tokenised; the two-part def/class match has to beat the bare
-// keyword alternative; self and the constants have to beat it too.
-// The subject string has already been through esc(), so < > & arrive as
-// entities — the operator branch matches those forms and never a bare &,
-// which would otherwise chop an entity in half.
+// One branch for every identifier, and the word decides its own class from a
+// hash. Spelling the keywords and the fifty builtins out as regex alternatives
+// made the engine try eighty literals at every word boundary in the file, three
+// times the cost for the same output, on a pass that runs every frame you type.
+var KWSET={},BISET={},CONSET={'None':1,'True':1,'False':1},
+    SELFSET={'self':1,'cls':1};
+(KW+'|def|class').split('|').forEach(function(w){KWSET[w]=1;});
+BI.split('|').forEach(function(w){BISET[w]=1;});
+
+// Order still matters. Strings and comments come first so nothing inside them
+// is tokenised, and the number branch precedes the word branch so 1e5 is one
+// number rather than a 1 and an e5.
+// The subject has already been through esc(), so < > & arrive as entities —
+// the operator branch matches those forms and never a bare &, which would
+// otherwise chop an entity in half.
+// Order still matters. Strings and comments come first so nothing inside them
+// is tokenised, and the number branch precedes the word branch so 1e5 is one
+// number rather than a 1 and an e5.
+// A branch matching runs of whitespace was tried here, on the theory that
+// failing every branch at every space of a four-space indent is wasteful. It
+// measured 40% slower: one callback per run costs more than the failed matches
+// it saves, and python on a phone has a great many short runs.
+// The subject has already been through esc(), so < > & arrive as entities —
+// the operator branch matches those forms and never a bare &, which would
+// otherwise chop an entity in half.
 var RE=new RegExp(
-   '(#[^\\n]*)'                                     // 1  comment
- +'|([rbfuRBFU]{0,2}(?:'+STR+'))'                   // 2  string
- +'|(@[A-Za-z_][\\w.]*)'                            // 3  decorator
- +'|\\b(def|class)(\\s+)([A-Za-z_]\\w*)'            // 4,5,6  declaration
- +'|\\b(self|cls)\\b'                               // 7  receiver
- +'|\\b(None|True|False)\\b'                        // 8  constant
- +'|\\b('+KW+')\\b'                                 // 9  keyword
- +'|\\b('+BI+')\\b'                                 // 10 builtin
- +'|\\b(\\d+\\.?\\d*(?:[eE][-+]?\\d+)?)\\b'         // 11 number
- +'|([A-Za-z_]\\w*)(?=\\s*\\()'                     // 12 call
- +'|([\\[\\](){}])'                                 // 13 bracket
+   '(#[^\\n]*)'                                     // 1 comment
+ +'|([rbfuRBFU]{0,2}(?:'+STR+'))'                   // 2 string
+ +'|(@[A-Za-z_][\\w.]*)'                            // 3 decorator
+ +'|(\\d+\\.?\\d*(?:[eE][-+]?\\d+)?)'               // 4 number
+ +'|([A-Za-z_]\\w*)'                                // 5 word
+ +'|([\\[\\](){}])'                                 // 6 bracket
  +'|(-&gt;|&lt;=|&gt;=|==|!=|&lt;|&gt;|&amp;|\\*\\*|//|\\+|-|\\*|/|%|=|\\||\\^|~)'
- ,'g');                                             // 14 operator
+ ,'g');                                             // 7 operator
 
 function sp(c,t){return '<span class="'+c+'">'+t+'</span>';}
+
+// is the next thing after this word an open paren, making it a call? scanned
+// rather than sliced — this is asked once per identifier in the buffer.
+function callsAhead(s,i){
+  while(i<s.length){
+    var c=s.charAt(i);
+    if(c!==' '&&c!=='\t')return c==='(';
+    i++;
+  }
+  return false;
+}
+
+// set by def and class so the name that follows is painted as a declaration
+var pendDfn=false;
+function word(w,whole,after){
+  if(pendDfn){pendDfn=false;return sp('dfn',w);}
+  if(KWSET[w]){pendDfn=(w==='def'||w==='class');return sp('kw',w);}
+  if(SELFSET[w])return sp('slf',w);
+  if(CONSET[w])return sp('con',w);
+  if(BISET[w])return sp('bi',w);
+  if(callsAhead(whole,after))return sp('fn',w);
+  return w;                       // a plain name costs no span at all
+}
 // three colours cycling by nesting depth. the whole reason this editor exists
 // is that you cannot see where a bracket went missing on a phone; matching
 // pairs sharing a colour is the cheapest fix for that.
@@ -88,12 +125,14 @@ function caretLine(){
   return n;
 }
 
+// the full result of the last lint, before the caret's line is taken out of it
+var ALLERRS=[], lintPending=false;
+
 // draw wavy underlines on a transparent copy of the text, layered under the
 // caret. same font and wrapping as #hl, so the lines land in the right place.
-function redline(ls){
-  if(typeof lintPy!=='function')return;
-  var here=caretLine(),all=lintPy(ed.value,siblingNames()),keep=[];
-  for(var q=0;q<all.length;q++)if(all[q].line!==here)keep.push(all[q]);
+function showErrs(ls){
+  var here=caretLine(),keep=[];
+  for(var q=0;q<ALLERRS.length;q++)if(ALLERRS[q].line!==here)keep.push(ALLERRS[q]);
   ERRS=keep;
   var bad={};
   ERRS.forEach(function(e){(bad[e.line]=bad[e.line]||[]).push(e);});
@@ -130,6 +169,17 @@ function redline(ls){
     warn.textContent=ov?ov+' over 44':'';
   }
 }
+
+var lastLinted=null;
+function redline(ls){
+  if(typeof lintPy!=='function')return;
+  if(ed.value!==lastLinted){          // blur and focus do not change the text
+    ALLERRS=lintPy(ed.value,siblingNames());
+    lastLinted=ed.value;
+  }
+  lintPending=false;
+  showErrs(ls);
+}
 // tap the warn bar to jump to the first error
 if(warn)warn.addEventListener('click',function(){
   if(!ERRS.length)return;
@@ -149,19 +199,15 @@ function paint(){
   praf=requestAnimationFrame(function(){praf=null;paintNow();});
 }
 function paintNow(){
-  bdepth=0;
+  bdepth=0; pendDfn=false;
   hl.innerHTML=esc(ed.value).replace(RE,
-    function(m,com,str,dec,dk,dgap,dnm,slf,con,kw,bi,num,fn,br,op){
+    function(m,com,str,dec,num,wd,br,op,at,whole){
+      if(wd)return word(wd,whole,at+m.length);
+      pendDfn=false;                      // whitespace never reaches here
       if(com)return sp('com',com);
       if(str)return sp('str',str);
       if(dec)return sp('dec',dec);
-      if(dnm)return sp('kw',dk)+dgap+sp('dfn',dnm);
-      if(slf)return sp('slf',slf);
-      if(con)return sp('con',con);
-      if(kw)return sp('kw',kw);
-      if(bi)return sp('bi',bi);
       if(num)return sp('num',num);
-      if(fn)return sp('fn',fn);
       if(br)return brk(br);
       if(op)return sp('op',op);
       return m;})+'\n\n';
@@ -172,6 +218,7 @@ function paintNow(){
   // the old squiggles describe text that has since moved; drop them rather
   // than leave them underlining the wrong characters until the next lint
   if(erShown&&er){er.innerHTML='';erShown=false;}
+  lintPending=true;
   try{clearTimeout(lintT);}catch(e){}
   lintT=setTimeout(function(){redline(ed.value.split('\n'));},220);
   // The pad writes ed.value directly and #ed is inputmode="none", so the
@@ -301,8 +348,11 @@ function caretWatch(){
   var l=caretLine();
   if(l===lastLine)return;
   lastLine=l;
-  try{clearTimeout(lintT);}catch(e){}
-  lintT=setTimeout(function(){redline(ed.value.split('\n'));},120);
+  // moving the caret cannot change what is wrong, only which line is exempt,
+  // so this re-renders the last result instead of linting again. if an edit is
+  // still waiting to be linted, that pass will do it and this would only paint
+  // stale marks against text that has already moved.
+  if(!lintPending)showErrs(ed.value.split('\n'));
 }
 document.addEventListener('selectionchange',caretWatch);
 ed.addEventListener('click',caretWatch);
