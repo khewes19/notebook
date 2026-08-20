@@ -110,6 +110,12 @@ border-radius:6px;background:var(--bg);min-height:34px;color:var(--fg)}
 #crumb span.sep{color:var(--mut)}
 #crumb span.rs{border:1px solid var(--bd);border-radius:5px;padding:2px 7px;color:var(--fg)}
 #app.fs #hd,#app.fs #warn{display:none}
-#dot{font-size:20px;line-height:1;color:var(--mut);flex:0 0 auto}
-#dot.ok{color:#1D9E75}
+/* Drawn, not typed. It used to be a ○ swapped for a •, and those measure
+   differently, so every save resized an element in the header flex row and
+   forced #wrap and the three stacked text layers to re-wrap — a full text
+   relayout twice per typing burst, exactly as the dot turned green. A fixed
+   box changing colour is paint only, and cannot invalidate layout. */
+#dot{flex:0 0 auto;width:13px;height:13px;border-radius:50%;
+box-sizing:border-box;border:2px solid var(--mut);background:transparent}
+#dot.ok{border-color:#1D9E75;background:#1D9E75}
 #warn{font-size:11px;color:var(--warn);flex:0 0 auto;min-height:14px}

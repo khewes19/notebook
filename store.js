@@ -1,4 +1,5 @@
 var FK='pyed:proj:v2', NK='pyed:notes:v1';
+var saveMs=0;
 var dot=document.getElementById('dot'), tsave=null;
 var STORE=null, SMODE='none';
 try{
@@ -29,16 +30,17 @@ var mstate=null;
 function mark(ok){
   if(!dot||mstate===ok)return;   // queue() calls this on every keystroke
   mstate=ok;
+  // className only. Writing textContent here changed the element's width and
+  // relaid out the editor underneath it; the dot is drawn in css now.
   dot.className=ok?'ok':'';
-  dot.textContent=ok?'•':'○';
   dot.title=SMODE==='none'?'not saving — memory only':'saving via '+SMODE;
 }
 if(dot)dot.addEventListener('click',function(){
   var w=document.getElementById('warn');
   if(w)w.textContent=SMODE==='none'
     ? '⚠ no storage backend — copy your work out before closing'
-    : 'saving via '+SMODE+' · '+Object.keys(FILES).length+' files'
-    +(window.ghNote?' · ⇅ '+ghNote():'');
+    : 'saving via '+SMODE+' · '+Object.keys(FILES).length+' files · last write '
+    +saveMs+'ms'+(window.ghNote?' · ⇅ '+ghNote():'');
 });
 // stringify walks every file and localStorage.setItem is synchronous, so on a
 // 700 ms debounce the write lands squarely between two keystrokes of anyone
@@ -51,10 +53,17 @@ function persist(){
   if(!STORE){mark(false);return;}
   if(cur&&!stack.length)FILES[cur]=ed.value;
   idle(function(){
+    // localStorage.setItem is synchronous disk work; time it so "it hitches
+    // when it saves" can be checked rather than argued about. tap the dot.
+    var t0=(window.performance&&performance.now)?performance.now():0;
     try{
       Promise.resolve()
         .then(function(){return STORE.set(FK,JSON.stringify({v:2,files:FILES,notes:NOTES,cur:cur}));})
-        .then(function(){mark(true);if(window.ghQueue)ghQueue();})
+        .then(function(){
+          if(t0)saveMs=Math.round(performance.now()-t0);
+          mark(true);
+          if(window.ghQueue)ghQueue();
+        })
         .catch(function(){mark(false);});
     }catch(e){mark(false);}
   });
