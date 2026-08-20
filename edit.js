@@ -69,6 +69,12 @@ var RE=new RegExp(
 
 function sp(c,t){return '<span class="'+c+'">'+t+'</span>';}
 
+// The operator set is small and known, so the three that need escaping are
+// looked up rather than sent through esc(). esc() is three regexes, and paying
+// that per operator token is worse than the whole-buffer pass it replaced.
+var OPESC={'<':'&lt;','>':'&gt;','&':'&amp;',
+           '<=':'&lt;=','>=':'&gt;=','->':'-&gt;'};
+
 // is the next thing after this word an open paren, making it a call? scanned
 // rather than sliced — this is asked once per identifier in the buffer.
 function callsAhead(s,i){
@@ -216,9 +222,12 @@ var now=(window.performance&&performance.now)
 function paintNow(){
   var t0=now();
   bdepth=0; pendDfn=false;
+  // one read of .value for the whole pass — it is a getter on a form control,
+  // not a plain property, and this used to touch it four times per frame
+  var v=ed.value;
   // only comments, strings and operators can hold < > or &, so only they are
   // escaped; identifiers, numbers and brackets never need it.
-  hl.innerHTML=ed.value.replace(RE,
+  hl.innerHTML=v.replace(RE,
     function(m,com,str,dec,num,wd,br,op,at,whole){
       if(wd)return word(wd,whole,at+m.length);
       pendDfn=false;                      // whitespace never reaches here
@@ -227,10 +236,10 @@ function paintNow(){
       if(dec)return sp('dec',dec);
       if(num)return sp('num',num);
       if(br)return brk(br);
-      if(op)return sp('op',esc(op));
+      if(op)return sp('op',OPESC[op]||op);
       return m;})+'\n\n';
   hl.scrollTop=ed.scrollTop;
-  var ls=ed.value.split('\n'),mx=0;
+  var ls=v.split('\n'),mx=0;
   for(var i=0;i<ls.length;i++)if(ls[i].length>mx)mx=ls[i].length;
   // the key figure is key-down to painted, which includes the wait for the
   // frame; the repaint on its own is in the dot's tap message.
@@ -246,10 +255,10 @@ function paintNow(){
   // The pad writes ed.value directly and #ed is inputmode="none", so the
   // 'input' event store.js listens on never fires for a typed character. Every
   // mutation repaints, so the save has to be triggered from here instead.
-  if(lastVal!==null&&lastVal!==ed.value&&typeof queue==='function'){
+  if(lastVal!==null&&lastVal!==v&&typeof queue==='function'){
     try{queue();}catch(e){}
   }
-  lastVal=ed.value;
+  lastVal=v;
   if(t0){
     var t1=now();
     slowMs=Math.max(t1-t0,slowMs*0.85);

@@ -118,4 +118,10 @@ border-radius:6px;background:var(--bg);min-height:34px;color:var(--fg)}
 #dot{flex:0 0 auto;width:13px;height:13px;border-radius:50%;
 box-sizing:border-box;border:2px solid var(--mut);background:transparent}
 #dot.ok{border-color:#1D9E75;background:#1D9E75}
-#warn{font-size:11px;color:var(--warn);flex:0 0 auto;min-height:14px}
+/* Fixed height, one line, clipped. With min-height it grew when a message
+   wrapped, and a taller warning bar resizes #wrap and re-lays out all three
+   text layers underneath it — the same trap the save dot was in. The lint
+   writes here on every pass, so it must never change the layout. */
+#warn{font-size:11px;color:var(--warn);flex:0 0 auto;
+height:15px;line-height:15px;white-space:nowrap;overflow:hidden;
+text-overflow:ellipsis}
