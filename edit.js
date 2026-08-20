@@ -391,11 +391,83 @@ function ins(t,back){
 var AUTOIGNORE={};        // words you have told it to leave alone, this session
 var fixNote=null, fixT=null;
 
-// Words already in the file are part of the dictionary — your own names are
-// not typos — and a word used more than once here is certainly deliberate.
+// The fixed half of the dictionary, built once. Rebuilding this on every space
+// was most of the cost — the check only gets this far for words that are not
+// already builtins, which is to say for every name you have ever invented.
+var DICT={}, DICTL=[];
+(function(){
+  var sets=[KWSET,BISET,CONSET,SELFSET],i,k;
+  for(i=0;i<sets.length;i++)
+    for(k in sets[i])if(sets[i].hasOwnProperty(k))DICT[k]=1;
+  for(k in DICT)if(DICT.hasOwnProperty(k)&&k.length>2)DICTL.push(k);
+})();
+
+// Keys next to each other on this keyboard — the same qwerty the pad draws.
+// A letter that landed one key over is the ordinary way a word comes out
+// wrong on glass, and it should not cost the same as an unrelated letter.
+var NEAR={
+  q:'wa', w:'qeas', e:'wrsd', r:'etdf', t:'ryfg', y:'tugh', u:'yihj',
+  i:'uojk', o:'ipkl', p:'ol',
+  a:'qwsz', s:'awedxz', d:'serfcx', f:'drtgvc', g:'ftyhbv', h:'gyujnb',
+  j:'huikmn', k:'jiolm', l:'kop',
+  z:'asx', x:'zsdc', c:'xdfv', v:'cfgb', b:'vghn', n:'bhjm', m:'njk'
+};
+function subCost(a,b){
+  if(a===b)return 0;
+  var la=a.toLowerCase(),lb=b.toLowerCase();
+  if(la===lb)return 0.3;                       // only the shift was missed
+  var n=NEAR[la];
+  return (n&&n.indexOf(lb)>=0)?0.5:1;          // one key over, or anything else
+}
+
+// Weighted optimal string alignment. Adjacent-key slips at a half each is what
+// lets a five-letter word arrive three letters wrong and still be recognised,
+// which is the thing a phone does and a plain edit distance cannot.
+// The three rows are allocated once. This runs against every candidate at every
+// word boundary, and a fresh array per row per candidate was several hundred
+// throwaway objects per space — which is what the delay actually was.
+var R0=[],R1=[],R2=[];
+function keyDist(a,b,cap){
+  var la=a.length,lb=b.length,i,j,t;
+  if(Math.abs(la-lb)>2)return cap+1;
+  var prev2=R0,prev=R1,cur=R2;
+  for(j=0;j<=lb;j++)prev[j]=j;
+  for(i=1;i<=la;i++){
+    cur[0]=i;
+    var rowMin=i, ai=a.charAt(i-1);
+    for(j=1;j<=lb;j++){
+      var v=prev[j]+1, w2=cur[j-1]+1;
+      if(w2<v)v=w2;
+      var w3=prev[j-1]+subCost(ai,b.charAt(j-1));
+      if(w3<v)v=w3;
+      if(i>1&&j>1&&ai===b.charAt(j-2)&&a.charAt(i-2)===b.charAt(j-1)){
+        var w4=prev2[j-2]+0.6;                 // thumbs transpose constantly
+        if(w4<v)v=w4;
+      }
+      cur[j]=v;
+      if(v<rowMin)rowMin=v;
+    }
+    if(rowMin>cap)return cap+1;
+    t=prev2; prev2=prev; prev=cur; cur=t;
+  }
+  return prev[lb];
+}
+
+// Words already in the file are dictionary too — your own names are not typos
+// — and a word used more than once is certainly deliberate. Rebuilt at most
+// once a second and a half; a name you typed a moment ago being briefly absent
+// costs nothing, and scanning the buffer on every space costs a great deal.
+// Rebuilt every time rather than cached. A cache here was stale exactly when it
+// mattered — a name typed moments ago is the one you are most likely to fumble
+// next — and once the allocation above was gone this stopped being the cost.
+var wordList=[];
 function bufferWords(){
   var set={},m,re=/[A-Za-z_]\w*/g,v=ed.value;
-  while((m=re.exec(v))!==null)set[m[0]]=(set[m[0]]||0)+1;
+  wordList=[];
+  while((m=re.exec(v))!==null){
+    if(!set[m[0]]&&m[0].length>2)wordList.push(m[0]);
+    set[m[0]]=(set[m[0]]||0)+1;
+  }
   return set;
 }
 
@@ -437,18 +509,21 @@ function autoCorrect(){
   var seen=bufferWords();
   if(seen[w]>1)return false;         // written twice: you meant it
 
-  var pool={},k;
-  for(k in KWSET)pool[k]=1;
-  for(k in BISET)pool[k]=1;
-  for(k in seen)if(seen.hasOwnProperty(k)&&k!==w)pool[k]=1;
-  delete pool[w];
-
-  var best='',ties=0;
-  for(k in pool){
-    if(!pool.hasOwnProperty(k)||k.length<3)continue;
-    if(osa(w,k,1)===1){ if(!ties)best=k; ties++; }
+  // Longer words earn more slack, because more of them landing one key over is
+  // still obviously the same word. Four adjacent slips in an eight-letter name
+  // is a thumb drifting, not a different word.
+  var cap=w.length<=4?1:(w.length<=6?1.5:2);
+  var best='',bestD=cap+0.001,next=bestD,i,k,d;
+  // two flat arrays, no object built per keystroke
+  for(i=0;i<DICTL.length+wordList.length;i++){
+    k=i<DICTL.length?DICTL[i]:wordList[i-DICTL.length];
+    if(k===w)continue;
+    d=keyDist(w,k,cap);
+    if(d<bestD){next=bestD;bestD=d;best=k;}
+    else if(d<next)next=d;
   }
-  if(ties!==1)return false;          // a tie is a guess, and this one is silent
+  // a clear winner, or nothing. two words equally close is a guess.
+  if(!best||bestD>cap||next-bestD<0.25)return false;
 
   ed.value=v.slice(0,s)+best+v.slice(e);
   ed.selectionStart=ed.selectionEnd=p+(best.length-w.length);
