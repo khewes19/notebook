@@ -12,6 +12,16 @@ var ed=document.getElementById('ed'), hl=document.getElementById('hl'),
     ct=document.getElementById('ct'), warn=document.getElementById('warn');
 var shift=false, page=0;
 
+// Let iOS supply the letters. The pad's own qwerty was built because a web page
+// could not reach the system keyboard's behaviour — but the price was giving up
+// autocorrect, predictive text, dictation and the key feedback that comes with
+// them, and rebuilding the first of those from a Python word list was never
+// going to correct "hekow" to "hello". The two code rows stay, as a bar above
+// the system keyboard, because that is the part iOS genuinely does not offer:
+// a colon, an underscore and a bracket pair within reach.
+// Flip this to false to get the self-contained keyboard back.
+var SYSKB=true;
+
 // Base URL for every model call. It must be a proxy that holds the API key —
 // worker/worker.js is one, ready to paste into Cloudflare. Pointing this
 // straight at api.anthropic.com cannot work: the browser has no key to send,
@@ -35,26 +45,12 @@ var KWSET={},BISET={},CONSET={'None':1,'True':1,'False':1},
 (KW+'|def|class').split('|').forEach(function(w){KWSET[w]=1;});
 BI.split('|').forEach(function(w){BISET[w]=1;});
 
-// Order still matters. Strings and comments come first so nothing inside them
-// is tokenised, and the number branch precedes the word branch so 1e5 is one
-// number rather than a 1 and an e5.
-// The subject has already been through esc(), so < > & arrive as entities —
-// the operator branch matches those forms and never a bare &, which would
-// otherwise chop an entity in half.
-// Order still matters. Strings and comments come first so nothing inside them
-// is tokenised, and the number branch precedes the word branch so 1e5 is one
-// number rather than a 1 and an e5.
-// A branch matching runs of whitespace was tried here, on the theory that
-// failing every branch at every space of a four-space indent is wasteful. It
-// measured 40% slower: one callback per run costs more than the failed matches
-// it saves, and python on a phone has a great many short runs.
-// This runs over the raw buffer, not an escaped copy. esc() was three more
-// regex passes and three more strings the size of the file, every frame, to
-// protect three characters — and < > & are all operators, so the only branch
-// that can produce them escapes its own token. Anything the regex does not
-// match is a dot, a comma, a colon, a backslash or whitespace, none of which
-// need escaping. It also retires the entity-splitting hazard the operator
-// branch used to carry.
+// Runs over the raw buffer, not an escaped copy: < > and & are all operators,
+// so the one branch that can produce them escapes its own token, and anything
+// unmatched is a dot, a comma, a colon, a backslash or whitespace.
+// A branch matching runs of whitespace was tried and measured 40% slower — one
+// callback per run costs more than the failed matches it saves, and python on a
+// phone is mostly short runs of indentation.
 // Line at a time, so a keystroke can repaint one line instead of the document.
 // Nothing here crosses a newline: a triple-quoted string that opens and does
 // not close becomes an opener, and the state is carried into the next line.
@@ -379,7 +375,8 @@ function ins(t,back){
   x.value=v.slice(0,s)+t+v.slice(e);
   x.selectionStart=x.selectionEnd=s+t.length-(back||0);
   refocus(x);
-  if(x===ed){autoCorrect();paint();}
+  // iOS corrects its own keyboard's words, and better; ours would fight it
+  if(x===ed){if(!SYSKB)autoCorrect();paint();}
 }
 
 // ---- autocorrect ------------------------------------------------------------
@@ -658,7 +655,8 @@ function render(){
   var sb=mk(r4,'space',function(){ins(' ');},'sp'); sb.style.fontSize='15px';
   mk(r4,'⏎',enter,'wide');
 }
-render();
+// with the system keyboard the letter rows are iOS's job
+if(SYSKB)document.getElementById('pad').className='sys'; else render();
 
 ed.addEventListener('input',paint);
 ed.addEventListener('scroll',function(){

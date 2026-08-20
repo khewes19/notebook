@@ -257,7 +257,10 @@ function unzoom(){
   }else{
     app.style.transform='';
     app.style.width='';
-    app.style.height='';
+    // The system keyboard shrinks the visual viewport but leaves 100dvh alone,
+    // so the code rows would sit behind it. Follow the viewport instead, and
+    // only once it has shrunk by more than a toolbar's worth.
+    app.style.height=(vv.height<window.innerHeight-80)?(vv.height+'px'):'';
   }
 }
 if(vv){

@@ -56,6 +56,9 @@ box-shadow:0 -1px 0 var(--ksh)}
 .row{display:flex;gap:6px}
 #code,#code2{gap:5px}
 #code button,#code2 button{flex:1 1 0;min-width:0;height:38px;font-size:17px}
+/* with the system keyboard doing the letters, the pad is only the code rows */
+#pad.sys #r1,#pad.sys #r2,#pad.sys #r3,#pad.sys #r4{display:none}
+#pad.sys{gap:7px;padding-bottom:7px}
 /* word keys carry more glyphs than a symbol, so they get their own size */
 #code button.word,#code2 button.word{font-size:11px;letter-spacing:-.2px}
 .row button{flex:1 1 0;height:46px;min-width:0;padding:0;
