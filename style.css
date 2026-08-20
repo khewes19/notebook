@@ -63,6 +63,18 @@ font-family:ui-monospace,Menlo,monospace;font-size:22px;font-weight:400;
 border:0;border-radius:6px;background:var(--key);color:var(--fg);
 box-shadow:0 1px 0 var(--ksh)}
 .row button:active,.row button.hit{background:var(--kw);color:#fff;box-shadow:none;transform:translateY(1px)}
+/* The gaps between keys belonged to no key, so a press landing in one did
+   nothing at all — which reads as the keyboard being slow rather than as a
+   miss. ios has no dead space: every pixel of its keyboard belongs to a key.
+   This pseudo-element reaches out over the surrounding gap and is not a
+   separate event target, so a touch on it resolves to its own button. Nothing
+   moves and nothing is drawn; the keys only stop having edges.
+   Where two of these overlap in a gap the later sibling wins, which is the
+   right answer either way — the press lands on one of the two neighbours. */
+.row button{position:relative}
+.row button::after{content:'';position:absolute;
+left:-3px;right:-3px;top:-6px;bottom:-6px}
+#code button::after,#code2 button::after{left:-3px;right:-3px;top:-5px;bottom:-6px}
 .row button{-webkit-user-select:none;user-select:none}
 .wide{flex:2 1 0 !important}
 .sp{flex:4 1 0 !important}
