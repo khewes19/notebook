@@ -139,7 +139,11 @@ function onDouble(){
 }
 function save(){ popTo(0); if(cur)FILES[cur]=ed.value; try{if(typeof queue==='function')queue();}catch(e){} }
 function openFile(p){
-  save(); cur=p; ed.value=FILES[p]||''; stack=[];
+  save();
+  // the file being left is finished as far as the repo is concerned, so this
+  // is where its commit belongs — not on a timer while it is still being typed
+  try{if(window.ghFlush)ghFlush();}catch(e){}
+  cur=p; ed.value=FILES[p]||''; stack=[];
   ed.selectionStart=ed.selectionEnd=0; draw();
   try{queue();}catch(e){}
 }

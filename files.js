@@ -77,7 +77,7 @@ function panel(mode){
             cur=ks2.length?ks2[0]:'';
             stack=[]; ed.value=cur?FILES[cur]:''; draw();
           }
-          try{queue();}catch(e){}
+          try{queue();if(window.ghFlush)ghFlush();}catch(e){}
           redraw();
         });
         n2.addEventListener('click',redraw);
@@ -125,7 +125,7 @@ function panel(mode){
       ca.className='dc';
       y2.addEventListener('click',function(){
         FILES={}; NOTES={}; cur=''; stack=[]; hist=[]; ed.value='';
-        try{queue();}catch(e){}
+        try{queue();if(window.ghFlush)ghFlush();}catch(e){}
         draw(); redraw();
       });
       n3.addEventListener('click',redraw);

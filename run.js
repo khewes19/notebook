@@ -38,7 +38,7 @@ function openCell(){
   T=scr; scr.focus();
 }
 function closeCell(){
-  if(CELL){NOTES[CELL.key]=scr.value; try{queue();}catch(e){}}
+  if(CELL){NOTES[CELL.key]=scr.value; try{queue();if(window.ghFlush)ghFlush();}catch(e){}}
   cell.style.display='none'; T=null; ed.focus();
 }
 document.getElementById('cx').addEventListener('click',closeCell);

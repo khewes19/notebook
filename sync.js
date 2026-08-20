@@ -216,8 +216,14 @@ function ghPut(job,retry){
 function ghPush(){
   if(!ghOn())return Promise.resolve(false);
   // a push that arrives mid-push must come back rather than be dropped, or
-  // the last keystrokes of a burst never leave the phone
-  if(gbusy){ghQueue();return Promise.resolve(false);}
+  // the last of the work never leaves the phone. this is the one timer left:
+  // it exists to retry a collision, not to commit on a schedule.
+  if(gbusy){
+    GDIRTY=true;
+    try{clearTimeout(gtimer);}catch(e){}
+    gtimer=setTimeout(ghFlush,1500);
+    return Promise.resolve(false);
+  }
   if(cur&&!stack.length)FILES[cur]=ed.value;
   var jobs=ghPlan();
   if(!jobs.length){
@@ -239,14 +245,27 @@ function ghPush(){
   });
 }
 
-// store.js calls this after each debounced local save. Push on a longer fuse
-// than the 700 ms local write, so a burst of typing is one commit, not thirty.
+// store.js calls this after each debounced local save. It only records that
+// there is something to push — the push itself happens when you leave the file.
+// On a timer, every four-second pause became a commit, and the history was
+// mostly noise about a line still being written.
 function ghQueue(){
   if(!ghOn()||GHALT)return;
   GDIRTY=true;
-  try{clearTimeout(gtimer);}catch(e){}
-  gtimer=setTimeout(function(){ghPush();},4000);
+  ghCfgSave();
+  ghStat(gstat==='err'?'err':'ok');
 }
+
+// leaving a file, or leaving the app. localStorage already holds the work, so
+// a flush that does not finish costs nothing but a later commit.
+function ghFlush(){
+  if(!ghOn()||GHALT||!GDIRTY)return;
+  ghPush();
+}
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState==='hidden')ghFlush();
+});
+window.addEventListener('pagehide',ghFlush);
 
 // ---- panel ----------------------------------------------------------------
 
