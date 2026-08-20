@@ -39,8 +39,9 @@ if(dot)dot.addEventListener('click',function(){
   var w=document.getElementById('warn');
   if(w)w.textContent=SMODE==='none'
     ? '⚠ no storage backend — copy your work out before closing'
-    : 'saving via '+SMODE+' · '+Object.keys(FILES).length+' files · last write '
-    +saveMs+'ms'+(window.ghNote?' · ⇅ '+ghNote():'');
+    : 'saving via '+SMODE+' · '+Object.keys(FILES).length+' files · write '
+    +saveMs+'ms · repaint '+Math.round(window.slowMs||0)+'ms'
+    +(window.ghNote?' · ⇅ '+ghNote():'');
 });
 // stringify walks every file and localStorage.setItem is synchronous, so on a
 // 700 ms debounce the write lands squarely between two keystrokes of anyone

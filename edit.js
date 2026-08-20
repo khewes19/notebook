@@ -50,9 +50,13 @@ BI.split('|').forEach(function(w){BISET[w]=1;});
 // failing every branch at every space of a four-space indent is wasteful. It
 // measured 40% slower: one callback per run costs more than the failed matches
 // it saves, and python on a phone has a great many short runs.
-// The subject has already been through esc(), so < > & arrive as entities —
-// the operator branch matches those forms and never a bare &, which would
-// otherwise chop an entity in half.
+// This runs over the raw buffer, not an escaped copy. esc() was three more
+// regex passes and three more strings the size of the file, every frame, to
+// protect three characters — and < > & are all operators, so the only branch
+// that can produce them escapes its own token. Anything the regex does not
+// match is a dot, a comma, a colon, a backslash or whitespace, none of which
+// need escaping. It also retires the entity-splitting hazard the operator
+// branch used to carry.
 var RE=new RegExp(
    '(#[^\\n]*)'                                     // 1 comment
  +'|([rbfuRBFU]{0,2}(?:'+STR+'))'                   // 2 string
@@ -60,7 +64,7 @@ var RE=new RegExp(
  +'|(\\d+\\.?\\d*(?:[eE][-+]?\\d+)?)'               // 4 number
  +'|([A-Za-z_]\\w*)'                                // 5 word
  +'|([\\[\\](){}])'                                 // 6 bracket
- +'|(-&gt;|&lt;=|&gt;=|==|!=|&lt;|&gt;|&amp;|\\*\\*|//|\\+|-|\\*|/|%|=|\\||\\^|~)'
+ +'|(->|<=|>=|==|!=|\\*\\*|//|[-+*/%=|^~<>&])'
  ,'g');                                             // 7 operator
 
 function sp(c,t){return '<span class="'+c+'">'+t+'</span>';}
@@ -205,29 +209,33 @@ function paint(){
 // sticking. Shown in the counter only when it is bad enough to feel, so that
 // "typing is laggy" can be answered with a number instead of a theory — and if
 // this stays small while typing still drags, the cost is not in here.
-var slowMs=0;
+var slowMs=0, keyMs=0, keyT0=0;
 var now=(window.performance&&performance.now)
   ? function(){return performance.now();} : function(){return 0;};
 
 function paintNow(){
   var t0=now();
   bdepth=0; pendDfn=false;
-  hl.innerHTML=esc(ed.value).replace(RE,
+  // only comments, strings and operators can hold < > or &, so only they are
+  // escaped; identifiers, numbers and brackets never need it.
+  hl.innerHTML=ed.value.replace(RE,
     function(m,com,str,dec,num,wd,br,op,at,whole){
       if(wd)return word(wd,whole,at+m.length);
       pendDfn=false;                      // whitespace never reaches here
-      if(com)return sp('com',com);
-      if(str)return sp('str',str);
+      if(com)return sp('com',esc(com));
+      if(str)return sp('str',esc(str));
       if(dec)return sp('dec',dec);
       if(num)return sp('num',num);
       if(br)return brk(br);
-      if(op)return sp('op',op);
+      if(op)return sp('op',esc(op));
       return m;})+'\n\n';
   hl.scrollTop=ed.scrollTop;
   var ls=ed.value.split('\n'),mx=0;
   for(var i=0;i<ls.length;i++)if(ls[i].length>mx)mx=ls[i].length;
+  // the key figure is key-down to painted, which includes the wait for the
+  // frame; the repaint on its own is in the dot's tap message.
   ct.textContent=ls.length+' ln · max '+mx
-    +(slowMs>8?' · '+Math.round(slowMs)+'ms':'');
+    +(keyMs>16?' · '+Math.round(keyMs)+'ms':'');
   // the old squiggles describe text that has since moved, so they go away —
   // but hide the layer rather than clearing it. innerHTML='' tears down a
   // whole document's worth of nodes, and the next lint rebuilds it anyway.
@@ -242,7 +250,11 @@ function paintNow(){
     try{queue();}catch(e){}
   }
   lastVal=ed.value;
-  if(t0)slowMs=Math.max(now()-t0,slowMs*0.85);
+  if(t0){
+    var t1=now();
+    slowMs=Math.max(t1-t0,slowMs*0.85);
+    if(keyT0){keyMs=Math.max(t1-keyT0,keyMs*0.85);keyT0=0;}
+  }
 }
 var T=null;
 function tgt(){return T||ed;}
@@ -287,8 +299,11 @@ function mk(host,label,fn,cls){
   if(cls)b.className=cls;
   b.addEventListener('pointerdown',function(e){
     e.preventDefault();
+    keyT0=now();          // stopped when the repaint that shows it finishes
     b.classList.add('hit');
     fn();
+    // ios safari does not implement this, so the tick the pad was written for
+    // has never fired on the device it was written for.
     if(navigator.vibrate)navigator.vibrate(3);
   });
   b.addEventListener('pointerup',function(){b.classList.remove('hit');});
