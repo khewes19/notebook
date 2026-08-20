@@ -181,6 +181,8 @@ function showErrs(ls){
     erShown=ERRS.length>0;
   }
   if(!warn)return;
+  // a correction owns the bar until it times out, so the undo stays reachable
+  if(fixNote)return;
   if(ERRS.length){
     warn.className='';
     warn.textContent='⚠ '+(ERRS[0].line+1)+':'+(ERRS[0].col+1)+' — '+ERRS[0].msg
@@ -230,6 +232,7 @@ function applyFix(e){
 // jumps to it otherwise. Correction is never automatic: a wrong squiggle costs
 // the reader a moment, a wrong edit costs them their code.
 if(warn)warn.addEventListener('click',function(){
+  if(undoFix())return;              // a correction just happened: take it back
   if(!ERRS.length)return;
   if(applyFix(ERRS[0]))return;
   var head=ed.value.split('\n').slice(0,ERRS[0].line).join('\n').length;
@@ -375,7 +378,113 @@ function ins(t,back){
   var x=tgt(),s=x.selectionStart,e=x.selectionEnd,v=x.value;
   x.value=v.slice(0,s)+t+v.slice(e);
   x.selectionStart=x.selectionEnd=s+t.length-(back||0);
-  refocus(x); if(x===ed)paint();
+  refocus(x);
+  if(x===ed){autoCorrect();paint();}
+}
+
+// ---- autocorrect ------------------------------------------------------------
+// The keyboard's version of this, not the linter's: a word is fixed the moment
+// you finish it, and undone with one tap. The linter's "did you mean" still
+// exists for what this will not touch, but waiting for a lint to fix a typo you
+// already know you made is too slow to be worth having.
+
+var AUTOIGNORE={};        // words you have told it to leave alone, this session
+var fixNote=null, fixT=null;
+
+// Words already in the file are part of the dictionary — your own names are
+// not typos — and a word used more than once here is certainly deliberate.
+function bufferWords(){
+  var set={},m,re=/[A-Za-z_]\w*/g,v=ed.value;
+  while((m=re.exec(v))!==null)set[m[0]]=(set[m[0]]||0)+1;
+  return set;
+}
+
+// Prose in a comment is fair game; the contents of a string are data, and
+// silently editing someone's data is not a thing a keyboard should do.
+function inQuotes(line,at){
+  var q=null;
+  for(var i=0;i<at&&i<line.length;i++){
+    var c=line.charAt(i);
+    if(q){ if(c==='\\')i++; else if(c===q)q=null; continue; }
+    if(c==='"'||c==="'")q=c;
+  }
+  return !!q;
+}
+
+function autoCorrect(){
+  if(typeof osa!=='function')return false;
+  var v=ed.value,p=ed.selectionStart||0;
+  if(p<2||/\w/.test(v.charAt(p-1)))return false;   // still inside a word
+
+  var e=p-1;
+  while(e>0&&!/\w/.test(v.charAt(e-1)))e--;
+  if(e<=0)return false;
+  var s=e;
+  while(s>0&&/\w/.test(v.charAt(s-1)))s--;
+  var w=v.slice(s,e);
+
+  // four characters and up. three-letter words are one edit from far too much
+  // — "foo" would become "for" every time you typed it.
+  if(w.length<4||!/^[A-Za-z_]/.test(w))return false;
+  if(AUTOIGNORE[w]||v.charAt(s-1)==='.')return false;
+  if(KWSET[w]||BISET[w]||CONSET[w]||SELFSET[w])return false;
+
+  var ls=v.slice(0,s).split('\n'),li=ls.length-1;
+  if(inQuotes(ls[li],ls[li].length))return false;
+  // a docstring is a string too; the paint already knows which lines are inside
+  if(li>0&&LOUT[li-1]&&LOUT[li-1].tri)return false;
+
+  var seen=bufferWords();
+  if(seen[w]>1)return false;         // written twice: you meant it
+
+  var pool={},k;
+  for(k in KWSET)pool[k]=1;
+  for(k in BISET)pool[k]=1;
+  for(k in seen)if(seen.hasOwnProperty(k)&&k!==w)pool[k]=1;
+  delete pool[w];
+
+  var best='',ties=0;
+  for(k in pool){
+    if(!pool.hasOwnProperty(k)||k.length<3)continue;
+    if(osa(w,k,1)===1){ if(!ties)best=k; ties++; }
+  }
+  if(ties!==1)return false;          // a tie is a guess, and this one is silent
+
+  ed.value=v.slice(0,s)+best+v.slice(e);
+  ed.selectionStart=ed.selectionEnd=p+(best.length-w.length);
+  noteFix(s,w,best);
+  try{if(typeof queue==='function')queue();}catch(_){}
+  return true;
+}
+
+function noteFix(at,from,to){
+  fixNote={at:at,from:from,to:to};
+  if(warn){warn.className='hint';warn.textContent=from+' → '+to+'  ·  tap to undo';}
+  try{clearTimeout(fixT);}catch(_){}
+  fixT=setTimeout(function(){
+    fixNote=null;
+    if(warn&&warn.className==='hint'){warn.className='';warn.textContent='';}
+    showErrs(ed.value.split('\n'));
+  },5000);
+}
+
+// Put the word back and stop correcting it. Both halves matter: undoing a
+// correction you did not want, and not having to undo it again.
+function undoFix(){
+  if(!fixNote)return false;
+  var f=fixNote,v=ed.value;
+  fixNote=null;
+  try{clearTimeout(fixT);}catch(_){}
+  if(v.substr(f.at,f.to.length)===f.to){
+    ed.value=v.slice(0,f.at)+f.from+v.slice(f.at+f.to.length);
+    ed.selectionStart=ed.selectionEnd=f.at+f.from.length;
+    refocus(ed); paint();
+    try{if(typeof queue==='function')queue();}catch(_){}
+  }
+  AUTOIGNORE[f.from]=1;
+  if(warn){warn.className='';warn.textContent='';}
+  showErrs(ed.value.split('\n'));
+  return true;
 }
 function dedent(){
   var v=ed.value,s=ed.selectionStart,ls=v.lastIndexOf('\n',s-1)+1,
