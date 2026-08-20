@@ -184,6 +184,7 @@ function showErrs(ls){
   if(ERRS.length){
     warn.className='';
     warn.textContent='⚠ '+(ERRS[0].line+1)+':'+(ERRS[0].col+1)+' — '+ERRS[0].msg
+      +(ERRS[0].fix?'  tap to fix':'')
       +(ERRS.length>1?'  (+'+(ERRS.length-1)+')':'');
   }else{
     var ov=0;
@@ -203,9 +204,34 @@ function redline(ls){
   lintPending=false;
   showErrs(ls);
 }
-// tap the warn bar to jump to the first error
+// Replace the typo with the suggestion. Checks that the characters it is about
+// to replace are still the ones it was told about — the buffer may have moved
+// since the lint ran — and puts the caret after the correction so the next
+// keystroke carries on rather than landing somewhere surprising.
+function applyFix(e){
+  if(!e||!e.fix)return false;
+  var ls=ed.value.split('\n');
+  if(e.line>=ls.length)return false;
+  var line=ls[e.line];
+  if(line.substr(e.col,e.len)!==e.fix.from)return false;
+  ls[e.line]=line.slice(0,e.col)+e.fix.to+line.slice(e.col+e.len);
+  var head=0;
+  for(var i=0;i<e.line;i++)head+=ls[i].length+1;
+  ed.value=ls.join('\n');
+  var p=head+e.col+e.fix.to.length;
+  ed.selectionStart=ed.selectionEnd=Math.min(p,ed.value.length);
+  refocus(ed);
+  paint();
+  try{if(typeof queue==='function')queue();}catch(_){}
+  return true;
+}
+
+// Tapping the bar fixes the first error when there is a correction for it, and
+// jumps to it otherwise. Correction is never automatic: a wrong squiggle costs
+// the reader a moment, a wrong edit costs them their code.
 if(warn)warn.addEventListener('click',function(){
   if(!ERRS.length)return;
+  if(applyFix(ERRS[0]))return;
   var head=ed.value.split('\n').slice(0,ERRS[0].line).join('\n').length;
   var p=(ERRS[0].line?head+1:0)+ERRS[0].col;
   ed.selectionStart=ed.selectionEnd=Math.min(p,ed.value.length);

@@ -346,8 +346,11 @@ function lintPy(src,known){
         var here=scoped.scopeOf[i]||scoped.module;
         if(visible(here,nm))continue;
         if(scoped.header[i]&&here.parent&&visible(here.parent,nm))continue;
+        var did=suggest(nm,here,scoped.header[i]?here.parent:null,outer);
         st.errs.push({line:i,col:at,len:nm.length,
-          msg:'"'+nm+'" is not defined in this scope'});
+          msg:did?('"'+nm+'" is not defined — did you mean "'+did+'"?')
+                 :('"'+nm+'" is not defined in this scope'),
+          fix:did?{from:nm,to:did}:null});
       }
     }
     if(importing&&!st.stack.length&&!/\\[ \t]*$/.test(flat))importing=false;
@@ -587,6 +590,77 @@ function buildScopes(src){
 }
 
 // the scope chain, with class bodies skipped once we have stepped out of one
+// ---- did you mean ----------------------------------------------------------
+// A name that resolves nowhere, sitting one edit away from a name that does,
+// is a typo rather than a guess. The bar for saying so is high on purpose: a
+// wrong suggestion is worse than none, because the reader has to stop and work
+// out that it is wrong, and after the second one they stop reading them.
+
+// Optimal string alignment — Levenshtein plus transposition at cost one, which
+// matters here because thumbs on glass swap adjacent letters constantly.
+// Gives up as soon as a whole row exceeds the cap.
+function osa(a,b,cap){
+  var la=a.length,lb=b.length,i,j;
+  if(Math.abs(la-lb)>cap)return cap+1;
+  var prev2=[],prev=[],cur=[];
+  for(j=0;j<=lb;j++)prev[j]=j;
+  for(i=1;i<=la;i++){
+    cur=[i];
+    var rowMin=i;
+    for(j=1;j<=lb;j++){
+      var cost=a.charAt(i-1)===b.charAt(j-1)?0:1;
+      var v=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+cost);
+      if(i>1&&j>1&&a.charAt(i-1)===b.charAt(j-2)&&a.charAt(i-2)===b.charAt(j-1))
+        v=Math.min(v,prev2[j-2]+1);
+      cur[j]=v;
+      if(v<rowMin)rowMin=v;
+    }
+    if(rowMin>cap)return cap+1;
+    prev2=prev; prev=cur;
+  }
+  return prev[lb];
+}
+
+function collectVisible(sc,into){
+  var first=true,k;
+  while(sc){
+    if(first||sc.kind!=='class')
+      for(k in sc.names)if(sc.names.hasOwnProperty(k))into[k]=1;
+    first=false; sc=sc.parent;
+  }
+}
+
+// The candidates are the builtins and everything actually in reach. Keywords
+// are deliberately not among them: "foo" sits one edit from "for", and being
+// told so is noise every time.
+function suggest(nm,sc,alt,outer){
+  var pool={},k;
+  collectVisible(sc,pool);
+  if(alt)collectVisible(alt,pool);
+  if(outer)for(k in outer)if(outer.hasOwnProperty(k))pool[k]=1;
+  for(k in BUILTIN)if(BUILTIN.hasOwnProperty(k))pool[k]=1;
+  delete pool[nm];
+  delete pool['*'];
+
+  // A name that differs only in case is certain at any length — X for x is
+  // worth saying, where one edit between two-letter names never is.
+  var low=nm.toLowerCase();
+  for(k in pool)
+    if(pool.hasOwnProperty(k)&&k.toLowerCase()===low)return k;
+
+  if(nm.length<3)return '';
+  var cap=nm.length<=5?1:2;
+  var best='',bestD=cap+1,ties=0;
+  for(k in pool){
+    if(!pool.hasOwnProperty(k)||k.length<2)continue;
+    var d=osa(nm,k,cap);
+    if(d<bestD){bestD=d;best=k;ties=1;}
+    else if(d===bestD)ties++;
+  }
+  // two candidates equally close is not a typo anyone can act on
+  return (bestD<=cap&&ties===1)?best:'';
+}
+
 function visible(sc,nm){
   var first=true;
   while(sc){

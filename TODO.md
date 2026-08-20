@@ -3,30 +3,6 @@
 Ordered roughly by what is blocking what. Everything here is wanted; nothing
 here is started.
 
-## autocorrect the obvious typo
-
-Type `pront`, get `print`. The pieces already exist: `lint.js` knows every
-builtin and keyword, and since the scope work it also knows every name bound
-anywhere in reach, per scope. A name that resolves nowhere and sits within one
-or two edits of a name that does is not ambiguous — it is a typo.
-
-Two halves, and they are worth keeping separate:
-
-- **Say it.** The existing "not defined in this scope" squiggle gains a
-  suggestion: `"pront" is not defined — did you mean print?`. Cheap, and it
-  cannot do any harm, because it only ever adds words to a message that was
-  already being shown.
-- **Fix it.** Tapping the warning bar currently jumps to the error; tapping a
-  suggestion would apply it. Correction has to stay a deliberate tap. Silent
-  autocorrect in a code editor is how `l` becomes `I` and an afternoon
-  disappears, and this editor's whole argument is that a wrong squiggle costs
-  more than a missing one — a wrong *edit* costs more still.
-
-Edit distance is Levenshtein capped at 1 for short names and 2 for long ones,
-against builtins first and names in scope second. Adjacent-key transposition
-deserves a lower cost than an arbitrary substitution: on a phone keyboard the
-likely typos are neighbours.
-
 ## tips, and a help agent
 
 `✦ Tips` works, but only once `API` in `edit.js` points at a proxy holding the
