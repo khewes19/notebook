@@ -12,9 +12,11 @@ var ed=document.getElementById('ed'), hl=document.getElementById('hl'),
     ct=document.getElementById('ct'), warn=document.getElementById('warn');
 var shift=false, page=0;
 
-// every model call goes through here.
-// point it at your own proxy (tailscale / worker) once the key lives there.
-var API='https://api.anthropic.com';
+// Base URL for every model call. It must be a proxy that holds the API key —
+// worker/worker.js is one, ready to paste into Cloudflare. Pointing this
+// straight at api.anthropic.com cannot work: the browser has no key to send,
+// and run.js says so rather than letting the request fail as a bare 401.
+var API='';
 
 var KW='return|yield|if|elif|else|for|while|break|continue|pass|'
      +'import|from|as|with|try|except|finally|raise|lambda|and|or|not|in|is|'

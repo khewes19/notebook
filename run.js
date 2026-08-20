@@ -71,30 +71,53 @@ async function ensurePy(){
   if(!PY||typeof PY.runPython!=='function')throw new Error('runtime init failed');
   return PY;
 }
+// Every model call goes through here, so the model id, the refusal check and
+// the "you have not stood the proxy up yet" message live in one place.
+// The browser never holds a key: API points at a worker that adds it, which is
+// also what makes the request legal cross-origin.
+var MODEL='claude-opus-5';
+async function ask(body,beta){
+  if(!API||/(^|\.)api\.anthropic\.com/.test(API))
+    throw new Error('no proxy configured — point API in edit.js at your worker');
+  // fallbacks:"default" reroutes a declined request server-side instead of
+  // handing back a refusal; it is what the accompanying beta flag gates.
+  var betas='server-side-fallback-2026-07-01'+(beta?','+beta:'');
+  var r=await fetch(API+'/v1/messages',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','anthropic-beta':betas},
+    body:JSON.stringify(body)
+  });
+  var d=await r.json();
+  if(d.error)throw new Error(d.error.message||('api error '+r.status));
+  // a refusal is a 200 with no content worth reading, so check before reading
+  if(d.stop_reason==='refusal')
+    throw new Error('the model declined this one'
+      +(d.stop_details&&d.stop_details.category
+        ? ' ('+d.stop_details.category+')' : ''));
+  return d;
+}
+
 async function serverRun(){
   say('running on the server…','tip');
   var body={
-    model:'claude-sonnet-4-6',
-    max_tokens:1000,
-    tools:[{type:'code_execution_20250825',name:'code_execution'}],
+    model:MODEL,
+    max_tokens:8000,          // a real traceback does not fit in a thousand
+    fallbacks:'default',
+    tools:[{type:'code_execution_20260521',name:'code_execution'}],
     messages:[{role:'user',content:
       'Run this Python and report the output. Use the code execution tool. '
      +'Do not explain, do not comment on the code. If it raises, run it anyway '
      +'and report the traceback verbatim.\n\n```python\n'
      +fullSource().slice(0,8000)+'\n'+scr.value.slice(0,2000)+'\n```'}]
   };
-  var r=await fetch(API+'/v1/messages',{
-    method:'POST',
-    headers:{'Content-Type':'application/json',
-             'anthropic-beta':'code-execution-2025-08-25'},
-    body:JSON.stringify(body)
-  });
-  var d=await r.json();
-  if(d.error)throw new Error(d.error.message||'api error');
+  var d=await ask(body,'code-execution-2025-08-25');
   var out=[],txt=[],got=false;
   (d.content||[]).forEach(function(b){
     if(b.type==='text'&&b.text)txt.push(b.text.trim());
-    if(b.type==='code_execution_tool_result'){
+    // 20260521 returns bash_code_execution_tool_result; the bare name is what
+    // the older tool versions returned, and costs nothing to keep accepting.
+    if(b.type==='bash_code_execution_tool_result'||
+       b.type==='code_execution_tool_result'){
       got=true;
       var c=b.content||{};
       if(c.stdout)out.push(c.stdout);
@@ -109,22 +132,18 @@ async function serverRun(){
   return true;
 }
 
-async function traceRun(){
-  say('no local runtime — tracing with the model…','tip');
-  try{
-    var r=await fetch(API+'/v1/messages',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,
-        messages:[{role:'user',content:
-          'Act as CPython. Given this file then this scratch appended, output '
-         +'EXACTLY what stdout would show, or the traceback if it raises. '
-         +'No explanation, no markdown, just the output.\n\nFILE:\n'
-         +fullSource().slice(0,6000)+'\n\nSCRATCH:\n'+scr.value.slice(0,2000)}]})
-    });
-    var d=await r.json();
-    var t=(d.content||[]).map(function(x){return x.text||'';}).join('').trim();
-    say('⚠ simulated — no wasm runtime here\n\n'+(t||'(no output)'),'tip');
-  }catch(e){ say('trace failed: '+(e.message||e),'err'); }
+// The last resort when neither Pyodide nor the server can run the code: hand
+// it to the clipboard so a real interpreter in the chat can. An earlier version
+// asked the model to act as CPython and print what stdout would show; it was
+// replaced by this and then sat unreachable, because the assignment below runs
+// at load and wins over the declaration. Simulated output that looks real is
+// worse than no output, so only this route survives.
+function traceRun(){
+  var ok=copyText(chatPayload());
+  say((ok?'⇪ copied to clipboard.\n':'')
+    +'No runtime in this sandbox. Paste into the chat and Claude will run it '
+    +'for real — stdout, tracebacks, and plots.\n\nTap ✦ Tips for a review '
+    +'without leaving the cell.','tip');
 }
 var PYDEAD=false;
 async function runCell(){
@@ -168,13 +187,10 @@ document.getElementById('crun').addEventListener('click',runCell);
 async function tipCell(){
   say('thinking…','tip');
   try{
-    var prev=outp.textContent;
-    var r=await fetch(API+'/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        model:'claude-sonnet-4-6',
-        max_tokens:1000,
+    var d=await ask({
+        model:MODEL,
+        max_tokens:1000,        // five short lines by design
+        fallbacks:'default',
         messages:[{role:'user',content:
           'You review Python for a phone editor where short functions matter.\n'
          +'Reply in at most 5 short lines, no markdown, no preamble.\n'
@@ -186,13 +202,12 @@ async function tipCell(){
          +'FILE:\n'+fullSource().slice(0,6000)
          +'\n\nFUNCTION UNDER REVIEW: '+(CELL?CELL.name:'')
          +'\n\nSCRATCH:\n'+scr.value.slice(0,1000)}]
-      })
     });
-    var d=await r.json();
     var txt=(d.content||[]).map(function(x){return x.text||'';}).join('').trim();
     say(txt||'no response','tip');
   }catch(e){
-    say('tips unavailable: '+(e.message||e),'err');
+    // the real reason, not a shrug — 401 and 429 need different answers
+    say('tips: '+(e.message||e),'err');
   }
 }
 document.getElementById('ctip').addEventListener('click',tipCell);
@@ -219,14 +234,6 @@ document.getElementById('cchat').addEventListener('click',function(){
     : 'copy failed — select the source above manually','tip');
 });
 
-// when the server path is unavailable, offer the chat route instead of a trace
-traceRun=async function(){
-  var ok=copyText(chatPayload());
-  say((ok?'⇪ copied to clipboard.\n':'')
-    +'No runtime in this sandbox. Paste into the chat and Claude will run it '
-    +'for real — stdout, tracebacks, and plots.\n\nTap ✦ Tips for a review '
-    +'without leaving the cell.','tip');
-};
 scr.addEventListener('focus',function(){T=scr;});
 ed.addEventListener('focus',function(){if(cell.style.display!=='block')T=null;});
 document.getElementById('back').addEventListener('click',goBack);
