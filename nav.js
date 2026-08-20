@@ -118,16 +118,24 @@ function goBack(){
   restorePath(f.path);
   draw();
 }
+function flash(msg){
+  var w=document.getElementById('warn');
+  if(!w)return;
+  w.className='hint'; w.textContent=msg;
+  setTimeout(function(){
+    if(w.className==='hint'){w.className='';w.textContent='';paint();}
+  },1600);
+}
 function onDouble(){
   var w=wordAt();
-  if(!w)return;
+  if(!w){flash('· no word under the caret');return;}
   var line=caretLine();
   if(stack.length&&stack[stack.length-1].name===w){pop();return;}
   var bs=blocks(ed.value);
   for(var i=0;i<bs.length;i++){
     if(bs[i].n===w&&bs[i].s===line){push(bs[i]);return;}
   }
-  gotoDef(w);
+  if(!gotoDef(w))flash('· no def for "'+w+'"');
 }
 function save(){ popTo(0); if(cur)FILES[cur]=ed.value; try{if(typeof queue==='function')queue();}catch(e){} }
 function openFile(p){
@@ -136,17 +144,22 @@ function openFile(p){
   try{queue();}catch(e){}
 }
 
-var lastTap=0;
-ed.addEventListener('pointerdown',function(e){
+var lastTap=0, lastX=0, lastY=0;
+function near(a,b){return Math.abs(a-b)<34;}
+ed.addEventListener('touchend',function(e){
   var t=Date.now();
-  if(t-lastTap<330){
-    e.preventDefault(); lastTap=0;
-    var p2=ed.selectionStart;
-    setTimeout(function(){
-      ed.selectionStart=ed.selectionEnd=p2;
-      onDouble();},0);
-  }else lastTap=t;
-});
+  var c=e.changedTouches&&e.changedTouches[0];
+  var x=c?c.clientX:0, y=c?c.clientY:0;
+  if(t-lastTap<420&&near(x,lastX)&&near(y,lastY)){
+    lastTap=0;
+    e.preventDefault();
+    setTimeout(onDouble,0);     // let the caret land first
+    return;
+  }
+  lastTap=t; lastX=x; lastY=y;
+},{passive:false});
+// desktop / trackpad
+ed.addEventListener('dblclick',function(e){e.preventDefault();onDouble();});
 document.addEventListener('touchmove',function(e){
   if(e.touches.length>1)e.preventDefault();
 },{passive:false});

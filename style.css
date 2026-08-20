@@ -11,11 +11,12 @@
 html{background:var(--bg)}
 body{margin:0;background:var(--bg);color:var(--fg);overflow:hidden;
 overscroll-behavior:none;font-family:-apple-system,system-ui,sans-serif}
-#app{display:flex;flex-direction:column;gap:6px;padding:6px;
+#app{display:flex;flex-direction:column;gap:6px;
+padding:calc(6px + env(safe-area-inset-top)) 6px 6px;
 height:100dvh;transform-origin:0 0}
 #hd{display:flex;align-items:center;gap:6px;flex:0 0 auto;flex-wrap:nowrap}
 #ct{font-size:11px;color:var(--mut);flex:1;white-space:nowrap;overflow:hidden}
-#hd button{flex:0 0 auto;height:28px;padding:0 8px;border:1px solid var(--bd);
+#hd button{flex:0 0 auto;height:36px;min-width:36px;padding:0 9px;border:1px solid var(--bd);
 border-radius:6px;background:var(--surf);color:var(--fg);font-size:12px;white-space:nowrap}
 #wrap{position:relative;flex:1 1 auto;min-height:130px;
 border:1px solid var(--bd);border-radius:8px;background:var(--surf);overflow:hidden}
