@@ -1,1 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0f14">
+<title>Pitchlog</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #0b0f14; --panel: #131a22; --panel2: #1b2430; --text: #e8eef5; --muted: #8696a7;
+    --accent: #ffcf4a; --green: #3ddc84; --red: #ff5c5c; --line: #243040;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+  #map { flex: 1; background: #0b0f14; }
+  .leaflet-container { background: #0b0f14; }
+  header { position: absolute; top: 0; left: 0; right: 0; z-index: 500; padding: calc(env(safe-area-inset-top) + 10px) 12px 8px;
+    display: flex; gap: 8px; align-items: center; pointer-events: none; }
+  header > * { pointer-events: auto; }
+  .brand { font-weight: 800; letter-spacing: .5px; background: var(--panel); padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line); }
+  .brand span { color: var(--accent); }
+  .pill { background: var(--panel); border: 1px solid var(--line); color: var(--text); padding: 8px 12px; border-radius: 12px; font-size: 14px; }
+  button { font: inherit; cursor: pointer; }
+  .btn { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; font-weight: 600; }
+  .btn.primary { background: var(--accent); color: #111; border-color: var(--accent); }
+  .btn.green { background: var(--green); color: #062; border-color: var(--green); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.small { padding: 6px 10px; font-size: 13px; border-radius: 10px; }
+  nav { display: flex; background: var(--panel); border-top: 1px solid var(--line); padding: 6px 6px calc(env(safe-area-inset-bottom) + 6px); z-index: 600; }
+  nav button { flex: 1; background: none; border: 0; color: var(--muted); padding: 8px 0 4px; font-size: 12px; font-weight: 600; }
+  nav button.on { color: var(--accent); }
+  nav button .ic { display: block; font-size: 20px; margin-bottom: 2px; }
+  .fab { position: absolute; right: 12px; bottom: 12px; z-index: 500; display: flex; flex-direction: column; gap: 8px; }
+  .fab .btn { width: 46px; height: 46px; padding: 0; border-radius: 23px; font-size: 20px; display: flex; align-items: center; justify-content: center; }
+  .view { position: absolute; inset: 0; background: var(--bg); z-index: 450; overflow-y: auto; -webkit-overflow-scrolling: touch; display: none;
+    padding: calc(env(safe-area-inset-top) + 14px) 14px 20px; }
+  .view.on { display: block; }
+  h2 { margin: 6px 0 12px; font-size: 22px; }
+  h3 { margin: 18px 0 8px; font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .stat { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .stat .card { text-align: center; margin: 0; }
+  .stat b { display: block; font-size: 26px; color: var(--accent); }
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel2); font-size: 13px; margin: 0 6px 6px 0; }
+  .badge.off { opacity: .35; }
+  /* bottom sheet */
+  #sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 550; background: var(--panel); border-top-left-radius: 18px; border-top-right-radius: 18px;
+    border-top: 1px solid var(--line); padding: 10px 16px calc(env(safe-area-inset-bottom) + 16px); transform: translateY(110%); transition: transform .22s ease; max-height: 75%; overflow-y: auto; }
+  #sheet.on { transform: translateY(0); }
+  .grip { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 0 auto 10px; }
+  .chal { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .chal .btn { flex: 1 1 45%; text-align: left; }
+  .chal .btn small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .chal .btn.primary small { color: #333; }
+  /* modal */
+  #modal { position: absolute; inset: 0; z-index: 700; background: rgba(0,0,0,.6); display: none; align-items: flex-end; }
+  #modal.on { display: flex; }
+  #modal .box { background: var(--panel); width: 100%; border-top-left-radius: 18px; border-top-right-radius: 18px; padding: 16px 16px calc(env(safe-area-inset-bottom) + 16px); border-top: 1px solid var(--line); }
+  input[type=number], input[type=text], textarea { width: 100%; font: inherit; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  textarea { min-height: 120px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin: 8px 0; }
+  .seg button { flex: 1; background: none; border: 0; color: var(--muted); padding: 10px; font-weight: 600; }
+  .seg button.on { background: var(--panel2); color: var(--text); }
+  .timer { font-size: 56px; font-weight: 800; text-align: center; font-variant-numeric: tabular-nums; margin: 6px 0; }
+  .toast { position: absolute; top: calc(env(safe-area-inset-top) + 60px); left: 50%; transform: translateX(-50%); z-index: 800; background: var(--accent); color: #111; padding: 10px 16px; border-radius: 12px; font-weight: 700; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.on { opacity: 1; }
+  .pin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #0b0f14; background: #5b6b7c; box-shadow: 0 0 0 2px rgba(255,255,255,.15); }
+  .pin.got { background: var(--accent); box-shadow: 0 0 0 3px rgba(255,207,74,.35); }
+  .pin.bb { border-radius: 3px; }
+  .me { width: 16px; height: 16px; border-radius: 50%; background: #4aa8ff; border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(74,168,255,.25); }
+  .list-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .list-item:last-child { border-bottom: 0; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">PITCH<span>LOG</span></div>
+    <div class="pill" id="status">locating…</div>
+  </header>
+  <div id="map"></div>
+  <div class="fab">
+    <button class="btn" id="btnLocate" title="Center on me">◎</button>
+    <button class="btn primary" id="btnSearch" title="Find pitches here">⟳</button>
+  </div>
 
+  <div id="sheet">
+    <div class="grip"></div>
+    <div class="row">
+      <div>
+        <div id="shName" style="font-weight:800;font-size:18px"></div>
+        <div class="muted" id="shMeta"></div>
+      </div>
+      <button class="btn small" id="shClose">✕</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div class="muted" id="shDist"></div>
+      <button class="btn green" id="shCheckin">Check in</button>
+    </div>
+    <div class="muted" id="shHist" style="margin-top:8px"></div>
+    <h3>Challenges</h3>
+    <div class="chal">
+      <button class="btn" data-ch="touches">Touches<small>60 s, count your juggles</small></button>
+      <button class="btn" data-ch="freestyle">Freestyle<small>60 s, tricks landed</small></button>
+      <button class="btn" data-ch="trace" id="chTrace">Line trace<small>dribble every court line</small></button>
+      <button class="btn" data-ch="crossbar">Crossbar<small>10 shots, hits</small></button>
+    </div>
+    <div class="muted" style="margin-top:10px">Challenges unlock after check-in at this pitch.</div>
+  </div>
+
+  <div class="view" id="vCollect">
+    <h2>Collection</h2>
+    <div class="stat">
+      <div class="card"><b id="stPitches">0</b><span class="muted">pitches</span></div>
+      <div class="card"><b id="stCheckins">0</b><span class="muted">check-ins</span></div>
+      <div class="card"><b id="stTouches">0</b><span class="muted">best touches</span></div>
+    </div>
+    <h3>Badges</h3>
+    <div id="badges"></div>
+    <h3>Pitches</h3>
+    <div class="card" id="pitchList"></div>
+    <h3>Recent</h3>
+    <div class="card" id="recent"></div>
+  </div>
+
+  <div class="view" id="vMore">
+    <h2>Data</h2>
+    <div class="card">
+      <div class="muted">Everything lives in this browser. Copy the JSON somewhere safe or paste one back to restore.</div>
+      <div class="row" style="margin-top:10px;gap:8px">
+        <button class="btn" id="btnExport">Copy export</button>
+        <button class="btn" id="btnImport">Paste import</button>
+        <button class="btn" id="btnWipe" style="color:var(--red)">Wipe</button>
+      </div>
+      <textarea id="ioBox" placeholder="export appears here / paste here to import" style="margin-top:10px"></textarea>
+    </div>
+    <h3>How it works</h3>
+    <div class="card muted">
+      Pitches come from OpenStreetMap (leisure=pitch). Check in within 250 m to claim one. Challenges record a camera clip on your phone and log the number you enter. Automatic counting is a later layer.
+      <br><br>Missing a pitch? Add it on <a href="https://www.openstreetmap.org" target="_blank" rel="noopener">openstreetmap.org</a> and it shows up for everyone.
+    </div>
+  </div>
+
+  <nav>
+    <button class="on" data-v="map"><span class="ic">🗺</span>Map</button>
+    <button data-v="vCollect"><span class="ic">◆</span>Collection</button>
+    <button data-v="vMore"><span class="ic">≡</span>Data</button>
+  </nav>
+
+  <div id="modal"><div class="box" id="modalBox"></div></div>
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+  window.onerror = function (msg, src, line) {
+    var s = document.getElementById('status');
+    if (s) s.textContent = 'error: ' + msg + (line ? ' @' + line : '');
+  };
+</script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  if (typeof L === 'undefined') document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"><\/script>');
+</script>
+<script>
+(function () {
+  'use strict';
+  if (typeof L === 'undefined') { document.getElementById('status').textContent = 'error: map library blocked'; return; }
+  const CHECKIN_RADIUS_M = 250;
+  const SEARCH_RADIUS_M = 3000;
+  const DEFAULT = { lat: 42.3551, lon: -71.0657 }; // Boston Common
+  const KEY = 'pitchlog.v1';
+
+  // ---------- state ----------
+  let state = load();
+  let pitches = new Map();   // osm id -> pitch
+  let markers = new Map();
+  let me = null;             // {lat, lon, acc}
+  let meMarker = null;
+  let current = null;        // selected pitch
+  let watchId = null;
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) return JSON.parse(raw);
+    } catch (e) { /* storage unavailable */ }
+    return { pitches: {}, checkins: [], results: [] };
+  }
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { toast('Could not save'); }
+  }
+
+  // ---------- map ----------
+  const map = L.map('map', { zoomControl: false, attributionControl: true }).setView([DEFAULT.lat, DEFAULT.lon], 14);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO'
+  }).addTo(map);
+  map.on('moveend', () => { if (map.getZoom() >= 12) debounceSearch(); });
+
+  let searchTimer = null;
+  function debounceSearch() { clearTimeout(searchTimer); searchTimer = setTimeout(searchHere, 700); }
+
+  // ---------- geolocation ----------
+  function startLocating() {
+    if (!navigator.geolocation) { setStatus('no GPS'); return; }
+    watchId = navigator.geolocation.watchPosition(pos => {
+      const first = !me;
+      me = { lat: pos.coords.latitude, lon: pos.coords.longitude, acc: pos.coords.accuracy };
+      if (!meMarker) {
+        meMarker = L.marker([me.lat, me.lon], { icon: L.divIcon({ className: '', html: '<div class="me"></div>', iconSize: [16, 16] }), zIndexOffset: 1000 }).addTo(map);
+      } else meMarker.setLatLng([me.lat, me.lon]);
+      if (first) { map.setView([me.lat, me.lon], 15); searchHere(); }
+      setStatus('GPS ±' + Math.round(me.acc) + ' m');
+      if (current) renderSheet();
+    }, err => {
+      setStatus('GPS off, showing Boston');
+      searchHere();
+    }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
+  }
+
+  // ---------- overpass ----------
+  let loading = false;
+  async function searchHere() {
+    if (loading) return;
+    loading = true;
+    const c = map.getCenter();
+    setStatus('finding pitches…');
+    const q = `[out:json][timeout:25];
+      (
+        nwr["leisure"="pitch"]["sport"~"^(soccer|football|basketball|multi|futsal)"](around:${SEARCH_RADIUS_M},${c.lat},${c.lng});
+      );
+      out center tags;`;
+    const endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+    let data = null;
+    for (const url of endpoints) {
+      try {
+        const r = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+        if (!r.ok) throw new Error(r.status);
+        data = await r.json();
+        break;
+      } catch (e) { /* try next */ }
+    }
+    loading = false;
+    if (!data) { setStatus('pitch lookup failed'); return; }
+    let added = 0;
+    for (const el of data.elements) {
+      const lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
+      if (lat == null) continue;
+      const id = el.type[0] + el.id;
+      if (pitches.has(id)) continue;
+      const t = el.tags || {};
+      const sport = (t.sport || 'pitch').split(';')[0];
+      const p = { id, lat, lon, name: t.name || null, sport, surface: t.surface || null, lit: t.lit === 'yes', access: t.access || null };
+      pitches.set(id, p);
+      addMarker(p);
+      added++;
+    }
+    setStatus(pitches.size + ' pitches nearby');
+  }
+
+  function addMarker(p) {
+    const m = L.marker([p.lat, p.lon], { icon: iconFor(p) }).addTo(map);
+    m.on('click', () => openSheet(p));
+    markers.set(p.id, m);
+  }
+  function iconFor(p) {
+    const got = !!state.pitches[p.id];
+    const cls = 'pin' + (got ? ' got' : '') + (p.sport === 'basketball' ? ' bb' : '');
+    return L.divIcon({ className: '', html: `<div class="${cls}"></div>`, iconSize: [14, 14], iconAnchor: [7, 7] });
+  }
+  function refreshMarker(p) { const m = markers.get(p.id); if (m) m.setIcon(iconFor(p)); }
+
+  // ---------- geometry ----------
+  function distM(a, b) {
+    const R = 6371000, toR = x => x * Math.PI / 180;
+    const dLat = toR(b.lat - a.lat), dLon = toR(b.lon - a.lon);
+    const s = Math.sin(dLat / 2) ** 2 + Math.cos(toR(a.lat)) * Math.cos(toR(b.lat)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(s));
+  }
+  function fmtDist(m) { return m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km'; }
+  function label(p) { return p.name || (cap(p.sport) + ' pitch'); }
+  function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  // ---------- sheet ----------
+  const sheet = document.getElementById('sheet');
+  function openSheet(p) { current = p; renderSheet(); sheet.classList.add('on'); }
+  function closeSheet() { sheet.classList.remove('on'); current = null; }
+  document.getElementById('shClose').onclick = closeSheet;
+
+  function renderSheet() {
+    const p = current; if (!p) return;
+    document.getElementById('shName').textContent = label(p);
+    const bits = [cap(p.sport)];
+    if (p.surface) bits.push(p.surface);
+    if (p.lit) bits.push('lit');
+    if (p.access === 'private') bits.push('private');
+    document.getElementById('shMeta').textContent = bits.join(' · ');
+    const d = me ? distM(me, p) : null;
+    const near = d != null && d <= CHECKIN_RADIUS_M + (me.acc > 50 ? me.acc : 0);
+    document.getElementById('shDist').textContent = d == null ? 'waiting for GPS' : (near ? 'you are here' : fmtDist(d) + ' away');
+    const got = state.pitches[p.id];
+    const btn = document.getElementById('shCheckin');
+    btn.disabled = !near;
+    btn.textContent = got ? 'Check in again' : 'Claim pitch';
+    const n = state.checkins.filter(c => c.pitch === p.id).length;
+    const best = bestOf(p.id, 'touches');
+    document.getElementById('shHist').textContent = got
+      ? `${n} check-in${n === 1 ? '' : 's'} · claimed ${new Date(got.first).toLocaleDateString()}` + (best ? ` · best touches ${best}` : '')
+      : 'Not yet claimed.';
+    document.querySelectorAll('.chal .btn').forEach(b => { b.disabled = !got; });
+    document.getElementById('chTrace').style.display = p.sport === 'basketball' || p.sport === 'multi' ? '' : 'none';
+  }
+
+  document.getElementById('shCheckin').onclick = () => {
+    const p = current; if (!p || !me) return;
+    const d = distM(me, p);
+    if (d > CHECKIN_RADIUS_M + (me.acc > 50 ? me.acc : 0)) { toast('Get closer'); return; }
+    const now = Date.now();
+    if (!state.pitches[p.id]) {
+      state.pitches[p.id] = { id: p.id, name: p.name, sport: p.sport, lat: p.lat, lon: p.lon, first: now };
+      toast('Pitch claimed');
+    } else {
+      const last = state.checkins.filter(c => c.pitch === p.id).pop();
+      if (last && now - last.ts < 2 * 3600e3) { toast('Already checked in'); return; }
+      toast('Checked in');
+    }
+    state.checkins.push({ pitch: p.id, ts: now, acc: Math.round(me.acc) });
+    save(); refreshMarker(p); renderSheet();
+  };
+
+  document.querySelectorAll('.chal .btn').forEach(b => b.onclick = () => startChallenge(b.dataset.ch));
+
+  // ---------- challenges ----------
+  const CH = {
+    touches: { title: 'Touches', secs: 60, unit: 'touches', ask: 'How many touches?' },
+    freestyle: { title: 'Freestyle', secs: 60, unit: 'tricks', ask: 'Tricks landed?' },
+    trace: { title: 'Line trace', secs: 0, unit: 's', ask: 'Seconds to trace every line?' },
+    crossbar: { title: 'Crossbar', secs: 0, unit: '/10', ask: 'Hits out of 10?' }
+  };
+  let cam = 'environment';
+
+  function startChallenge(type) {
+    const c = CH[type]; const p = current; if (!c || !p) return;
+    const box = document.getElementById('modalBox');
+    box.innerHTML = `
+      <div class="row"><b style="font-size:18px">${c.title}</b><button class="btn small" id="mClose">✕</button></div>
+      <div class="muted">${label(p)}</div>
+      <div class="seg">
+        <button data-cam="user" ${cam === 'user' ? 'class="on"' : ''}>POV (front)</button>
+        <button data-cam="environment" ${cam === 'environment' ? 'class="on"' : ''}>3rd person (back)</button>
+      </div>
+      ${c.secs ? `<div class="timer" id="timer">${c.secs}</div>` : ''}
+      <div class="row" style="gap:8px;margin-top:8px">
+        ${c.secs ? '<button class="btn" id="mStart">Start timer</button>' : ''}
+        <label class="btn" style="text-align:center">Record clip<input type="file" accept="video/*" id="mClip" style="display:none"></label>
+      </div>
+      <div class="muted" id="mClipNote" style="margin-top:6px"></div>
+      <div style="margin-top:12px">
+        <div class="muted">${c.ask}</div>
+        <input type="number" inputmode="numeric" id="mVal" placeholder="0" min="0" step="1">
+      </div>
+      <button class="btn primary" id="mSave" style="width:100%;margin-top:12px">Log result</button>`;
+    document.getElementById('modal').classList.add('on');
+    box.querySelector('#mClose').onclick = closeModal;
+    box.querySelectorAll('[data-cam]').forEach(b => b.onclick = () => {
+      cam = b.dataset.cam; box.querySelectorAll('[data-cam]').forEach(x => x.classList.toggle('on', x === b));
+      setCapture();
+    });
+    function setCapture() { box.querySelector('#mClip').setAttribute('capture', cam); }
+    setCapture();
+    let tick = null, left = c.secs;
+    const startBtn = box.querySelector('#mStart');
+    if (startBtn) startBtn.onclick = () => {
+      if (tick) { clearInterval(tick); tick = null; startBtn.textContent = 'Start timer'; left = c.secs; box.querySelector('#timer').textContent = left; return; }
+      startBtn.textContent = 'Reset';
+      beep();
+      tick = setInterval(() => {
+        left--; box.querySelector('#timer').textContent = left;
+        if (left <= 3 && left > 0) beep();
+        if (left <= 0) { clearInterval(tick); tick = null; beep(880, .5); startBtn.textContent = 'Start timer'; }
+      }, 1000);
+    };
+    let clipMeta = null;
+    box.querySelector('#mClip').onchange = e => {
+      const f = e.target.files[0]; if (!f) return;
+      clipMeta = { size: f.size, type: f.type, cam };
+      box.querySelector('#mClipNote').textContent = 'Clip saved to your camera roll (' + (f.size / 1e6).toFixed(1) + ' MB). Not uploaded.';
+    };
+    box.querySelector('#mSave').onclick = () => {
+      const v = parseInt(box.querySelector('#mVal').value, 10);
+      if (isNaN(v) || v < 0) { toast('Enter a number'); return; }
+      if (type === 'crossbar' && v > 10) { toast('Max 10'); return; }
+      state.results.push({ pitch: p.id, type, value: v, ts: Date.now(), cam: clipMeta ? clipMeta.cam : null, clip: !!clipMeta });
+      save();
+      const prev = bestOf(p.id, type, 1);
+      toast(prev != null && isBetter(type, v, prev) ? 'New best' : 'Logged');
+      if (tick) clearInterval(tick);
+      closeModal(); renderSheet();
+    };
+  }
+  function closeModal() { document.getElementById('modal').classList.remove('on'); document.getElementById('modalBox').innerHTML = ''; }
+  function isBetter(type, a, b) { return type === 'trace' ? a < b : a > b; }
+  function bestOf(pitchId, type, skipLast) {
+    let rs = state.results.filter(r => r.pitch === pitchId && r.type === type);
+    if (skipLast) rs = rs.slice(0, -1);
+    if (!rs.length) return null;
+    return rs.reduce((m, r) => isBetter(type, r.value, m) ? r.value : m, rs[0].value);
+  }
+  let actx = null;
+  function beep(freq = 660, dur = .12) {
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.frequency.value = freq; o.connect(g); g.connect(actx.destination);
+      g.gain.setValueAtTime(.2, actx.currentTime); g.gain.exponentialRampToValueAtTime(.001, actx.currentTime + dur);
+      o.start(); o.stop(actx.currentTime + dur);
+    } catch (e) { /* no audio */ }
+  }
+
+  // ---------- collection ----------
+  function renderCollection() {
+    const ps = Object.values(state.pitches);
+    document.getElementById('stPitches').textContent = ps.length;
+    document.getElementById('stCheckins').textContent = state.checkins.length;
+    const t = state.results.filter(r => r.type === 'touches').map(r => r.value);
+    document.getElementById('stTouches').textContent = t.length ? Math.max(...t) : 0;
+
+    const per = {}; state.checkins.forEach(c => per[c.pitch] = (per[c.pitch] || 0) + 1);
+    const maxPer = Math.max(0, ...Object.values(per));
+    let maxSpread = 0;
+    for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) maxSpread = Math.max(maxSpread, distM(ps[i], ps[j]));
+    const sports = new Set(ps.map(p => p.sport));
+    const BADGES = [
+      ['First touch', 'claim a pitch', ps.length >= 1],
+      ['Groundhopper', '5 pitches', ps.length >= 5],
+      ['Collector', '25 pitches', ps.length >= 25],
+      ['Regular', '3 check-ins at one pitch', maxPer >= 3],
+      ['Local', '10 check-ins at one pitch', maxPer >= 10],
+      ['Road trip', 'pitches 50 km apart', maxSpread >= 50000],
+      ['Crossover', 'a court and a pitch', sports.has('basketball') && (sports.has('soccer') || sports.has('football'))],
+      ['Centurion', '100 touches', t.some(v => v >= 100)],
+      ['Night owl', 'check in after 9 pm', state.checkins.some(c => new Date(c.ts).getHours() >= 21)]
+    ];
+    document.getElementById('badges').innerHTML = BADGES.map(([n, d, ok]) =>
+      `<span class="badge${ok ? '' : ' off'}" title="${d}">${ok ? '◆' : '◇'} ${n}<span class="muted" style="font-size:11px">${d}</span></span>`).join('');
+
+    const pl = document.getElementById('pitchList');
+    pl.innerHTML = ps.length ? ps.sort((a, b) => b.first - a.first).map(p =>
+      `<div class="list-item"><div><b>${p.name || cap(p.sport) + ' pitch'}</b><div class="muted">${per[p.id] || 0} check-ins${bestOf(p.id, 'touches') ? ' · best ' + bestOf(p.id, 'touches') + ' touches' : ''}</div></div>
+       <button class="btn small" data-go="${p.id}">Map</button></div>`).join('')
+      : '<div class="muted">Nothing yet. Go stand on one.</div>';
+    pl.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { const p = state.pitches[b.dataset.go]; showView('map'); map.setView([p.lat, p.lon], 17); });
+
+    const rec = document.getElementById('recent');
+    const rs = state.results.slice(-8).reverse();
+    rec.innerHTML = rs.length ? rs.map(r => {
+      const p = state.pitches[r.pitch]; const c = CH[r.type];
+      return `<div class="list-item"><div><b>${c.title}</b> ${r.value}${c.unit === '/10' ? '/10' : ' ' + c.unit}<div class="muted">${p ? (p.name || cap(p.sport) + ' pitch') : r.pitch} · ${new Date(r.ts).toLocaleString()}${r.clip ? ' · 🎥 ' + (r.cam === 'user' ? 'POV' : '3rd') : ''}</div></div></div>`;
+    }).join('') : '<div class="muted">No results logged.</div>';
+  }
+
+  // ---------- views ----------
+  function showView(id) {
+    document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === id));
+    document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.v === id));
+    if (id === 'vCollect') renderCollection();
+    if (id === 'map') setTimeout(() => map.invalidateSize(), 50);
+  }
+  document.querySelectorAll('nav button').forEach(b => b.onclick = () => showView(b.dataset.v));
+
+  // ---------- data io ----------
+  document.getElementById('btnExport').onclick = async () => {
+    const s = JSON.stringify(state);
+    document.getElementById('ioBox').value = s;
+    try { await navigator.clipboard.writeText(s); toast('Copied'); } catch (e) { toast('Select and copy the box'); }
+  };
+  document.getElementById('btnImport').onclick = () => {
+    try {
+      const s = JSON.parse(document.getElementById('ioBox').value);
+      if (!s || typeof s !== 'object' || !s.pitches) throw new Error('shape');
+      state = { pitches: s.pitches || {}, checkins: s.checkins || [], results: s.results || [] };
+      save(); pitches.forEach(refreshMarker); renderCollection(); toast('Imported');
+    } catch (e) { toast('Bad JSON'); }
+  };
+  document.getElementById('btnWipe').onclick = () => {
+    const box = document.getElementById('modalBox');
+    box.innerHTML = `<b>Wipe everything?</b><div class="muted">Export first if you care.</div>
+      <div class="row" style="gap:8px;margin-top:12px"><button class="btn" id="wNo">Keep</button><button class="btn" id="wYes" style="color:var(--red)">Wipe</button></div>`;
+    document.getElementById('modal').classList.add('on');
+    box.querySelector('#wNo').onclick = closeModal;
+    box.querySelector('#wYes').onclick = () => { state = { pitches: {}, checkins: [], results: [] }; save(); pitches.forEach(refreshMarker); renderCollection(); closeModal(); toast('Wiped'); };
+  };
+
+  // ---------- misc ----------
+  document.getElementById('btnLocate').onclick = () => { if (me) map.setView([me.lat, me.lon], 16); else toast('No fix yet'); };
+  document.getElementById('btnSearch').onclick = searchHere;
+  function setStatus(s) { document.getElementById('status').textContent = s; }
+  let toastT = null;
+  function toast(s) { const t = document.getElementById('toast'); t.textContent = s; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 1600); }
+
+  startLocating();
+})();
+</script>
+</body>
+</html>
