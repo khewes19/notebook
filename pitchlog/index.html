@@ -19,6 +19,9 @@
   #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
   #map { flex: 1; background: #0b0f14; }
   .leaflet-container { background: #0b0f14; }
+  .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.8) contrast(.9) saturate(.5); }
+  .leaflet-control-attribution { background: rgba(11,15,20,.7); color: var(--muted); font-size: 10px; }
+  .leaflet-control-attribution a { color: var(--muted); }
   header { position: absolute; top: 0; left: 0; right: 0; z-index: 500; padding: calc(env(safe-area-inset-top) + 10px) 12px 8px;
     display: flex; gap: 8px; align-items: center; pointer-events: none; }
   header > * { pointer-events: auto; }
@@ -200,8 +203,8 @@
 
   // ---------- map ----------
   const map = L.map('map', { zoomControl: false, attributionControl: true }).setView([DEFAULT.lat, DEFAULT.lon], 14);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO'
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
   }).addTo(map);
   map.on('moveend', () => { if (map.getZoom() >= 12) debounceSearch(); });
 
